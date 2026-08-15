@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "自有 UI 窗口的权限。主窗口在引导完成后会导航到 dsh 的远程页面，届时不再使用这些 IPC。",
+  "windows": ["main", "settings", "close-confirm"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "dialog:default",
+    "store:default",
+    "process:default",
+    "global-shortcut:default",
+    "notification:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    }
+  ]
+}

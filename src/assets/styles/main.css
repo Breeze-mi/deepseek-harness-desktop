@@ -1,0 +1,87 @@
+:root {
+  /* 取自 DSH Web UI 实际配色，保证引导页导航到 DSH 时没有色差跳变 */
+  --bg: #0d0d0d;
+  --surface: #1a1a1a;
+  --surface-2: #232323;
+  --border: #2e2e2e;
+  --text: #ececec;
+  --text-dim: #8f8f8f;
+  --accent: #4d6bfe;
+  --danger: #ff6b6b;
+  --ok: #3ecf8e;
+
+  font-family: "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  /* 引导页不该被选中拖动，桌面应用不是网页 */
+  user-select: none;
+}
+
+button {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+button:hover {
+  background: #2c2c2c;
+  border-color: #3d3d3d;
+}
+
+button:active {
+  background: #1f1f1f;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 500;
+}
+
+button.primary:hover {
+  background: #6079fe;
+  border-color: #6079fe;
+}
+
+button.danger {
+  border-color: #4a2a2a;
+  color: #ff8f8f;
+}
+
+button.danger:hover {
+  background: #2a1c1c;
+}
+
+a {
+  color: var(--accent);
+}

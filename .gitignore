@@ -1,0 +1,48 @@
+# ---- 依赖与构建产物 ----
+node_modules
+dist
+dist-ssr
+*.local
+
+# Rust / Tauri 的产物在 src-tauri/.gitignore 里另行忽略
+# （/target/ 与 /gen/schemas）
+
+# ---- 日志 ----
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ---- 密钥与凭据 ----
+# 这一段是防御性的：仓库现在没有这些文件，但 P4 要接自更新，
+# `tauri signer generate` 会产出私钥，误提交一次就等于把签名身份送人。
+# 私钥应当放在仓库之外（如 ~/.tauri/），并通过环境变量注入 CI。
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets.json
+
+# ---- 编辑器与系统 ----
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ---- 本地工具的会话/配置 ----
+.claude/
