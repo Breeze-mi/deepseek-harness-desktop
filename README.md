@@ -34,7 +34,6 @@ Windows 10 / 11。Node.js ≥ 22.19 或 ≥ 24 —— 没有或版本不符时�
 
 - **`-setup.exe`**（推荐）装到用户目录，不需要管理员
 - `.msi` 装到 `Program Files`，需要管理员，适合批量部署
-- `-Portable.zip` 免安装。注意：**系统通知会被 Windows 署名为 PowerShell**，因为 toast 需要安装时创建的开始菜单快捷方式携带 AppUserModelID
 
 首次运行会弹 SmartScreen（本项目未购买代码签名证书），点「更多信息 → 仍要运行」。
 
