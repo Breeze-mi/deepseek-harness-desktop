@@ -1,9 +1,12 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    /* WebView2 是常青版 Chromium，ES2022 的 API 全都有。
+       脚手架默认给的 ES2020 会把 Array.prototype.at 之类判为不存在，
+       报错只在 vue-tsc 阶段出现 —— vite dev 不做类型检查，很容易漏到打包才炸。 */
+    "target": "ES2022",
     "useDefineForClassFields": true,
     "module": "ESNext",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
 
     /* Bundler mode */

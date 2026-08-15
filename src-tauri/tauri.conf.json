@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "msi"],
     "publisher": "Breeze-mi",
     "shortDescription": "DeepSeek Harness 桌面版",
     "longDescription": "DeepSeek Harness 的桌面外壳：自动准备 Node 运行时、安装 dsh 与界面插件，双击即用。",
