@@ -29,6 +29,15 @@ pub struct VersionStatus {
     pub installed: Option<String>,
     /// 「应该是什么版本」：dsh 取 registry 最新版，插件取我们钉死的版本
     pub target: Option<String>,
+    /// registry 上的最新版。插件这一行它与 target 不同 ——
+    /// 我们钉死的版本可能落后于上游，前端要靠它给出「升级到 X」的入口。
+    pub latest: Option<String>,
+    /// latest 是否严格新于 installed。
+    ///
+    /// **这个判断必须在 Rust 侧做。** 放到前端就得用 JS 比字符串，
+    /// 而 `"0.1.2" > "0.1.12"` 在 JS 里是 true —— 正是本文件的
+    /// `compares_numerically_not_lexically` 测试在防的那个错。
+    pub latest_is_newer: bool,
     /// installed 与 target 不一致，且 target 更新
     pub upgradable: bool,
     /// 补充说明。查不到、被钉住、版本号解析不了都靠它讲清楚。
@@ -147,15 +156,19 @@ pub async fn check(entry: Option<&Path>) -> UpgradeReport {
     UpgradeReport {
         dsh: VersionStatus {
             name: dsh::PACKAGE.to_string(),
-            installed: dsh_cur,
-            target: latest_dsh,
+            installed: dsh_cur.clone(),
+            target: latest_dsh.clone(),
+            latest_is_newer: is_newer(dsh_cur.as_deref(), latest_dsh.as_deref()),
+            latest: latest_dsh,
             upgradable: dsh_upgradable,
             note: dsh_note,
         },
         bundle: VersionStatus {
             name: plugins::BUNDLE.to_string(),
-            installed: bundle_cur,
+            installed: bundle_cur.clone(),
             target: Some(pinned.to_string()),
+            latest_is_newer: is_newer(bundle_cur.as_deref(), latest_bundle.as_deref()),
+            latest: latest_bundle,
             upgradable: bundle_upgradable,
             note: bundle_note,
         },

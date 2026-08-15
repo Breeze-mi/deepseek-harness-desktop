@@ -26,6 +26,8 @@ pub fn show_main(app: &AppHandle) {
     let Some(w) = app.get_webview_window(MAIN) else {
         return;
     };
+    // 用户主动来看了，托盘就没必要继续闪
+    crate::tray::stop_blink();
     let _ = w.show();
     let _ = w.unminimize();
     let _ = w.set_focus();

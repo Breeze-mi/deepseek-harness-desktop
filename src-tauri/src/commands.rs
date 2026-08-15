@@ -100,13 +100,13 @@ pub async fn check_upgrades(app: AppHandle) -> bootstrap::upgrade::UpgradeReport
     bootstrap::upgrade::check(entry.as_deref()).await
 }
 
-/// 设置页用：把 dsh 升到 registry 最新版。
+/// 设置页用：把 dsh 升到 registry 最新版，然后重启服务。
 ///
 /// **必须先停掉 dsh 子进程。** dsh 依赖 koffi、node-addon-* 这些原生模块，
 /// `.node` 文件被加载期间在 Windows 上是锁死的，npm 覆盖会撞 EPERM。
 ///
-/// 停掉之后主窗口那个页面就死了，所以这个操作天然是「升级 + 重启应用」，
-/// 调用方必须在点之前跟用户讲清楚。
+/// 升完直接重起 dsh 并把主窗口导到新端口，不需要用户重启整个应用 ——
+/// 换掉的只是 dsh 的文件，我们自己的进程没有任何理由跟着重来。
 #[tauri::command]
 pub async fn upgrade_dsh(app: AppHandle) -> Result<String, String> {
     use tauri::Manager;
@@ -117,12 +117,46 @@ pub async fn upgrade_dsh(app: AppHandle) -> Result<String, String> {
         .map_err(|e| format!("升级任务异常退出：{e}"))?
         .map_err(|e| e.to_string())?;
 
+    let version = bootstrap::upgrade::installed_dsh(&entry).unwrap_or_else(|| "未知".into());
+    // 缓存要在 restart 之前刷新 —— restart 读的就是这个值
     settings::set_dsh_entry(&app, &entry);
 
-    Ok(bootstrap::upgrade::installed_dsh(&entry).unwrap_or_else(|| "未知".into()))
+    crate::runtime::restart(app).await?;
+
+    Ok(version)
 }
 
-/// 重启整个应用。升级完 dsh 后由设置页调用。
+/// 设置页用：把界面插件升到指定版本（通常是上游最新版），然后重启 dsh。
+///
+/// `BUNDLE_VERSION` 只是**新装时的已知可用版本**，不是上限。用户显式升上去之后
+/// 引导流程不会把他降回来 —— `plugins::is_installed` 只在「装的比钉死的旧」
+/// 时才判定需要重装。
+///
+/// 和升级 dsh 一样要先停服务：插件里的 cloudflared / ssh2 / cpu-features 带原生
+/// 模块，运行中的 dsh 加载了它们，pnpm 覆盖会撞同一类 EPERM。
+#[tauri::command]
+pub async fn upgrade_plugins(app: AppHandle, version: String) -> Result<(), String> {
+    use crate::bootstrap::{download, node, plugins};
+    use tauri::Manager;
+
+    let entry = settings::dsh_entry(&app).ok_or_else(|| "找不到 dsh 安装位置".to_string())?;
+    let node = node::detect_system_node()
+        .or_else(download::installed_portable_node)
+        .ok_or_else(|| "找不到可用的 Node.js 运行时".to_string())?;
+
+    app.state::<crate::runtime::DshState>().shutdown();
+
+    tokio::task::spawn_blocking(move || plugins::install_version(&node, &entry, &version, None))
+        .await
+        .map_err(|e| format!("安装任务异常退出：{e}"))?
+        .map_err(|e| e.to_string())?;
+
+    // 插件是 dsh 启动时加载的，不重起服务不会生效
+    crate::runtime::restart(app).await?;
+    Ok(())
+}
+
+/// 重启整个应用。dsh 升级失败、服务起不来时的兜底。
 ///
 /// 用 `restart()` 而不是 `request_restart()`：后者会走完整的退出事件链，
 /// 而我们在 `on_window_event` 里拦了主窗口的 CloseRequested 去弹关闭确认框 ——

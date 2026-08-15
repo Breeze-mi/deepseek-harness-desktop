@@ -4,10 +4,6 @@ use serde::Serialize;
 ///
 /// 每个变体都要能翻译成「用户看得懂 + 知道下一步干什么」的文案 ——
 /// 引导失败时用户面对的是一个白屏应用，错误信息是他唯一的线索。
-///
-/// 下载 / 校验 / 超时 / 插件自检这几个变体要到 P1-P3 才有调用点，
-/// 先 allow 掉 dead_code，避免真正的警告被噪音淹没。
-#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum BootstrapError {
     #[error("未找到可用的 Node.js")]

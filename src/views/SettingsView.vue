@@ -18,7 +18,9 @@ const checking = ref(false);
 const upgrading = ref(false);
 const confirming = ref(false);
 const upgraded = ref("");
+const pluginsUpgraded = ref("");
 const upgradeError = ref("");
+const confirmingPlugins = ref(false);
 /** dsh 已被停掉、必须重启应用才能恢复 */
 const serviceStopped = ref(false);
 
@@ -82,8 +84,8 @@ async function checkUpgrades() {
 
 /**
  * 两段式确认。升级前会停掉 dsh 子进程 —— 它带原生模块，
- * 运行期间 npm 覆盖不了 —— 所以当前会话必然中断、且必须重启应用。
- * 这个代价得让用户先看见再点第二下。
+ * 运行期间 npm 覆盖不了 —— 所以当前会话必然中断。
+ * 升完会自动重起服务并把主窗口导到新端口，不用重启整个应用。
  */
 async function upgradeDsh() {
   if (!confirming.value) {
@@ -93,11 +95,16 @@ async function upgradeDsh() {
   confirming.value = false;
   upgrading.value = true;
   upgradeError.value = "";
-  // 服务在这一刻就已经停了。哪怕后面升级失败，用户也回不去，
-  // 所以标记要在 try 之前设 —— 失败路径同样需要那个重启按钮兜底。
+  // 服务在这一刻就停了。标记要设在 try 之前 ——
+  // 万一升级或重启失败，用户回不去，得靠那个重启按钮兜底。
   serviceStopped.value = true;
   try {
     upgraded.value = await api.upgradeDsh();
+    // 走到这里说明服务已经重新起来了
+    serviceStopped.value = false;
+    pluginsUpgraded.value = "";
+    // 刷新版本卡片，否则「升级 dsh」按钮会带着过期状态继续显示
+    await checkUpgrades();
   } catch (e) {
     upgradeError.value = String(e);
   } finally {
@@ -119,7 +126,44 @@ async function back() {
   }
 }
 
-onMounted(load);
+/**
+ * 把界面插件升到上游最新版。
+ *
+ * 本应用固定的版本只是「新装时的已知可用版本」，不是上限 ——
+ * 用户升上去之后引导流程不会再把他降回来。
+ */
+async function upgradePlugins() {
+  const latest = report.value?.bundle.latest;
+  if (!latest) return;
+
+  if (!confirmingPlugins.value) {
+    confirmingPlugins.value = true;
+    return;
+  }
+  confirmingPlugins.value = false;
+  upgrading.value = true;
+  upgradeError.value = "";
+  serviceStopped.value = true;
+  try {
+    await api.upgradePlugins(latest);
+    serviceStopped.value = false;
+    upgraded.value = "";
+    pluginsUpgraded.value = latest;
+    await checkUpgrades();
+  } catch (e) {
+    upgradeError.value = String(e);
+  } finally {
+    upgrading.value = false;
+  }
+}
+
+onMounted(async () => {
+  await load();
+  // 托盘的「检查更新」就是直接打开本页，所以挂载时自动查一次，
+  // 否则那个菜单项等于只是「打开设置」，名不副实。
+  // 不 await：让页面先渲染出来，网络查询在后台跑。
+  checkUpgrades();
+});
 </script>
 
 <template>
@@ -228,6 +272,17 @@ onMounted(load);
           <p v-else-if="report.bundle.note" class="dim small">
             {{ report.bundle.note }}
           </p>
+          <button
+            v-if="report.bundle.latestIsNewer && !serviceStopped"
+            class="chip"
+            :disabled="upgrading"
+            @click="upgradePlugins"
+          >
+            <template v-if="confirmingPlugins">
+              确认升到 {{ report.bundle.latest }}？会断开当前会话
+            </template>
+            <template v-else>升级到 {{ report.bundle.latest }}</template>
+          </button>
         </div>
       </template>
       <p v-else class="dim">尚未检查。dsh 与命令行共用同一份安装。</p>
@@ -239,7 +294,10 @@ onMounted(load);
         </template>
       </p>
       <p v-else-if="upgraded" class="warn">
-        dsh 已升级到 {{ upgraded }}。当前会话已断开，重启后生效。
+        dsh 已升级到 {{ upgraded }}，服务已重启。
+      </p>
+      <p v-else-if="pluginsUpgraded" class="warn">
+        界面插件已升级到 {{ pluginsUpgraded }}，服务已重启。
       </p>
 
       <div class="row">

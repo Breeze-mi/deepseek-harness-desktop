@@ -1,7 +1,9 @@
 //! 便携版 Node.js 的获取：版本发现 → 下载 → 校验 → 解压。
 //!
-//! 三个镜像源依次尝试，任一成功即止。**下载完必须校验 SHA256** ——
-//! 从镜像拉可执行文件不校验，等于把用户机器的执行权交给镜像运营方。
+//! 三个镜像源依次尝试，任一成功即止。**下载完必须校验 SHA256**，
+//! 而且**校验和要从官方源单独取**：如果哈希和 zip 来自同一个镜像，
+//! 校验就只能挡住传输损坏 —— 镜像运营方可以同时给出改过的包和匹配的哈希。
+//! 分开取之后，一个被攻陷的镜像才无法悄悄换掉用户机器上要执行的二进制。
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -11,7 +13,7 @@ use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::mirror::NODE_MIRRORS;
+use super::mirror::{NODE_MIRRORS, NODE_OFFICIAL};
 use super::node::{is_supported, NodeInfo};
 use super::{Reporter, Stage};
 use crate::error::{BootstrapError, Result};
@@ -65,12 +67,19 @@ pub fn installed_portable_node() -> Option<NodeInfo> {
 
         // 目录名形如 node-v22.19.0-win-x64，从中取版本号；
         // 不去执行它来问版本 —— 启动进程比读目录名慢得多，而且这一步在启动关键路径上
+        //
+        // 解析失败必须 `continue` 而不是 `?`：`?` 会从**整个函数**返回 None，
+        // 于是一个名字不规范的残留目录（比如中断留下的 .part）就能让扫描提前中止，
+        // 哪怕后面还躺着一份完好的便携 Node 也找不到。
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let ver = name
+        let Some(ver) = name
             .strip_prefix("node-v")
             .and_then(|s| s.split('-').next())
-            .and_then(|s| Version::parse(s).ok())?;
+            .and_then(|s| Version::parse(s).ok())
+        else {
+            continue;
+        };
 
         if is_supported(&ver) {
             return Some(NodeInfo {
@@ -194,8 +203,34 @@ async fn pick_version(client: &reqwest::Client, base: &str) -> Result<String> {
     }
 }
 
-/// SHASUMS256.txt 每行形如 `<64位十六进制>  node-vX-win-x64.zip`
+/// 取校验和。
+///
+/// **优先向官方源要，而不是向提供 zip 的那个镜像要。**
+/// 两者同源的话，校验就只能挡住传输损坏 —— 镜像运营方完全可以同时给出
+/// 改过的包和一份匹配的哈希，校验照样通过。分开取才有意义。
+///
+/// 官方不可达时退回镜像（国内直连 nodejs.org 经常超时，这是常态而非异常），
+/// 但要在日志里明说这次降级了：此时的校验只剩「防损坏」，不再「防投毒」。
 async fn fetch_expected_sha(
+    client: &reqwest::Client,
+    mirror_base: &str,
+    version: &str,
+    file_name: &str,
+) -> Result<String> {
+    if mirror_base != NODE_OFFICIAL {
+        match fetch_sha_from(client, NODE_OFFICIAL, version, file_name).await {
+            Ok(sha) => return Ok(sha),
+            Err(e) => eprintln!(
+                "[node] 官方校验和不可达（{e}），退回镜像自带的哈希 —— \
+                 本次只能防传输损坏，不能防镜像投毒"
+            ),
+        }
+    }
+    fetch_sha_from(client, mirror_base, version, file_name).await
+}
+
+/// SHASUMS256.txt 每行形如 `<64位十六进制>  node-vX-win-x64.zip`
+async fn fetch_sha_from(
     client: &reqwest::Client,
     base: &str,
     version: &str,

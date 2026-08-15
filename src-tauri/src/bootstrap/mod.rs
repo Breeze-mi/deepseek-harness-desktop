@@ -180,8 +180,21 @@ async fn pipeline(app: &AppHandle, reporter: &Reporter) -> Result<String> {
 
     // ---- 启动 dsh ----
     reporter.stage(Stage::StartingDsh);
-    let (handle, rx) = process::spawn(&node, &entry)?;
-    let url = process::wait_for_url(&rx, 60)?;
+
+    // **必须放进阻塞线程池。** `wait_for_url` 内部是 `recv_timeout`，
+    // 标准库的同步阻塞调用 —— 直接在 async 里跑会把一个 tokio worker
+    // 占死最多 60 秒，期间连进度事件都推不出去。
+    let node_for_spawn = node.clone();
+    let entry_for_spawn = entry.clone();
+    let (handle, url) = tokio::task::spawn_blocking(
+        move || -> Result<(process::DshHandle, String)> {
+            let (handle, rx) = process::spawn(&node_for_spawn, &entry_for_spawn)?;
+            let url = process::wait_for_url(&rx, 60)?;
+            Ok((handle, url))
+        },
+    )
+    .await
+    .map_err(|e| BootstrapError::Other(format!("启动任务异常退出：{e}")))??;
 
     // 句柄交给 managed state 保管。若只放局部变量，函数返回时会被 drop，
     // Drop 实现会把刚起来的 dsh 直接杀掉。

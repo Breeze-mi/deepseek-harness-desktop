@@ -13,8 +13,14 @@ use crate::error::{BootstrapError, Result};
 
 /// 聚合包。**版本号必须钉死**：这个包两天发过 12 个版本，
 /// 且官方 README 点名 0.1.1 的 dsh-pet 缺运行时文件。用 latest 是在赌 registry 缓存。
+///
+/// 钉的是「新装时的已知可用版本」，**不是上限** —— 用户可以从设置页显式升到上游
+/// 最新版，`is_installed` 只在「装的比这个旧」时才判定需要重装，不会把人降回来。
+///
+/// 0.1.15：已在真机验过鲸鱼娘与任务看板均正常，据此从 0.1.12 提上来。
+/// 以后往上提之前也要先实测一次，别只看版本号新就换 —— 0.1.1 那次就是教训。
 pub const BUNDLE: &str = "@linxin666/dsh-web-ui-all";
-pub const BUNDLE_VERSION: &str = "0.1.12";
+pub const BUNDLE_VERSION: &str = "0.1.15";
 
 const PROFILE: &str = "web";
 
@@ -188,34 +194,57 @@ fn has_allow_entry(src: &str, pkg: &str) -> bool {
     false
 }
 
-/// 安装聚合包。耗时可能几分钟，调用方须放在阻塞线程池里。
+/// 安装钉死的那个版本。引导流程用。
 ///
 /// 装一次可能不够：干净机器上 profile 是 dsh 在安装过程中现场 scaffold 的，
 /// 它可能覆盖掉我们预写的 `pnpm-workspace.yaml`，导致 allowBuilds 失效、
 /// 照样报 ERR_PNPM_IGNORED_BUILDS。所以撞到这个错就补写配置再试一次。
 pub fn install(node: &NodeInfo, entry: &Path, reporter: &Reporter) -> Result<()> {
+    install_version(node, entry, BUNDLE_VERSION, Some(reporter))
+}
+
+/// 安装指定版本。
+///
+/// `BUNDLE_VERSION` 是**新装时的已知可用版本**，不是天花板 —— 上游发新版后
+/// 用户可以从设置页显式升上去。钉死只是为了让全新安装落在一个验证过的版本上，
+/// 如果没有这条解绑路径，钉死就从保护变成了长期滞后。
+pub fn install_version(
+    node: &NodeInfo,
+    entry: &Path,
+    version: &str,
+    reporter: Option<&Reporter>,
+) -> Result<()> {
     ensure_allow_builds()?;
 
-    match run_install(node, entry, reporter) {
+    match run_install(node, entry, version, reporter) {
         Ok(()) => Ok(()),
         Err(e) if is_ignored_builds(&e) => {
             eprintln!("[plugins] 撞到 ERR_PNPM_IGNORED_BUILDS，补写 allowBuilds 后重试");
-            reporter.detail(Stage::InstallingPlugins, "补齐构建白名单后重试");
+            if let Some(r) = reporter {
+                r.detail(Stage::InstallingPlugins, "补齐构建白名单后重试");
+            }
             ensure_allow_builds()?;
-            run_install(node, entry, reporter)
+            run_install(node, entry, version, reporter)
         }
         Err(e) => Err(e),
     }
 }
 
-fn run_install(node: &NodeInfo, entry: &Path, reporter: &Reporter) -> Result<()> {
-    let spec = format!("{BUNDLE}@{BUNDLE_VERSION}");
+fn run_install(
+    node: &NodeInfo,
+    entry: &Path,
+    version: &str,
+    reporter: Option<&Reporter>,
+) -> Result<()> {
+    let spec = format!("{BUNDLE}@{version}");
     // 包名版本号是内部细节，用户只需要知道在装什么、大概要多久
     eprintln!("[plugins] 安装 {spec}");
-    reporter.detail(
-        Stage::InstallingPlugins,
-        "正在下载界面插件（首次需要几分钟）",
-    );
+    if let Some(r) = reporter {
+        r.detail(
+            Stage::InstallingPlugins,
+            "正在下载界面插件（首次需要几分钟）",
+        );
+    }
 
     run_checked(
         &node.path,

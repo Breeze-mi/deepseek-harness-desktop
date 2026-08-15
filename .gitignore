@@ -2,6 +2,7 @@
 node_modules
 dist
 dist-ssr
+
 *.local
 
 # Rust / Tauri 的产物在 src-tauri/.gitignore 里另行忽略
@@ -44,5 +45,6 @@ desktop.ini
 *.sln
 *.sw?
 
-# ---- 本地工具的会话/配置 ----
+
 .claude/
+

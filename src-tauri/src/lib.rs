@@ -96,6 +96,16 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // 用户把主窗口切回前台 = 他看见了，托盘不用再闪。
+            // 这条和 windows::show_main 里那次是互补的：那里管「我们主动调出窗口」，
+            // 这里管「用户自己用 Alt+Tab 或点任务栏切回来」。
+            if let WindowEvent::Focused(true) = event {
+                if window.label() == windows::MAIN {
+                    tray::stop_blink();
+                }
+                return;
+            }
+
             let WindowEvent::CloseRequested { api, .. } = event else {
                 return;
             };
@@ -129,6 +139,7 @@ pub fn run() {
             commands::set_notify_on_done,
             commands::check_upgrades,
             commands::upgrade_dsh,
+            commands::upgrade_plugins,
             commands::restart_app,
         ])
         .run(tauri::generate_context!())

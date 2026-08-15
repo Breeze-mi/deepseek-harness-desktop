@@ -54,6 +54,13 @@ export const api = {
    */
   upgradeDsh: () => invoke<string>("upgrade_dsh"),
 
+  /**
+   * 把界面插件装成指定版本，然后重启 dsh。
+   * 同样会中断当前会话（插件里有原生模块，运行中覆盖不了）。
+   */
+  upgradePlugins: (version: string) =>
+    invoke<void>("upgrade_plugins", { version }),
+
   restartApp: () => invoke<void>("restart_app"),
 };
 

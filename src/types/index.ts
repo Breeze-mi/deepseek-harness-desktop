@@ -43,6 +43,10 @@ export interface VersionStatus {
   installed: string | null;
   /** dsh 取 registry 最新版；插件取本应用钉死的版本 */
   target: string | null;
+  /** registry 上的最新版。插件这一行它可能新于 target。 */
+  latest: string | null;
+  /** latest 是否严格新于 installed。由 Rust 用 semver 算好，别在前端比字符串。 */
+  latestIsNewer: boolean;
   upgradable: boolean;
   note: string | null;
 }

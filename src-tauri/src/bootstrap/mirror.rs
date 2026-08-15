@@ -8,6 +8,13 @@ pub struct Mirror {
     pub base: &'static str,
 }
 
+/// Node.js 官方源。
+///
+/// 单列出来是因为**校验和只认它**：`SHASUMS256.txt` 若和 zip 取自同一个镜像，
+/// 校验就只能挡住传输损坏，挡不住镜像本身作恶 —— 它可以同时给出改过的包
+/// 和一份匹配的哈希。所以哈希始终优先向官方要，包可以走任意镜像。
+pub const NODE_OFFICIAL: &str = "https://nodejs.org/dist";
+
 /// Node.js 二进制。三个源的目录结构完全一致：
 /// `{base}/index.json` 与 `{base}/v{VER}/node-v{VER}-win-x64.zip`
 ///
@@ -24,7 +31,7 @@ pub const NODE_MIRRORS: &[Mirror] = &[
     },
     Mirror {
         name: "Node.js 官方",
-        base: "https://nodejs.org/dist",
+        base: NODE_OFFICIAL,
     },
 ];
 
