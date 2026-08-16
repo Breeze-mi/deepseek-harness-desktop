@@ -2,7 +2,6 @@ use serde::Serialize;
 
 /// 引导过程的统一错误。
 ///
-/// 每个变体都要能翻译成「用户看得懂 + 知道下一步干什么」的文案 ——
 /// 引导失败时用户面对的是一个白屏应用，错误信息是他唯一的线索。
 #[derive(Debug, thiserror::Error)]
 pub enum BootstrapError {
@@ -28,8 +27,13 @@ pub enum BootstrapError {
         stderr: String,
     },
 
-    #[error("等待 dsh 就绪超时（{secs}s）")]
+    #[error("等待 Dsh 就绪超时（{secs}s）")]
     ReadyTimeout { secs: u64 },
+
+    /// 单列一个变体而不是塞进 `Other`，是为了让「要不要自动重试」
+    /// 能靠类型判断，而不是去匹配错误文案
+    #[error("dsh 进程在打印监听地址前就退出了")]
+    DshExitedEarly,
 
     #[error("插件自检未通过：{0}")]
     PluginVerify(String),
@@ -60,8 +64,12 @@ impl BootstrapError {
                 "下载的文件已损坏或被篡改，出于安全考虑已中止安装。请重试；反复出现请换一个网络环境。",
             ),
             Self::ReadyTimeout { .. } => {
-                Some("dsh 启动超时。可在设置里查看日志，或尝试重启 dsh 服务。")
+                Some("dsh 启动超时。可在设置里打开日志查看 dsh 的输出，或尝试重启 dsh 服务。")
             }
+            Self::DshExitedEarly => Some(
+                "已自动多次重试（含重启应用）仍未成功。这通常是 dsh 上游的偶发启动故障，\
+                 再点几次「重试」往往能过；日志末尾是 dsh 自己的输出。",
+            ),
             Self::PluginVerify(_) => {
                 Some("插件未正确挂载，鲸鱼娘等界面功能不会出现。点重试通常可以解决。")
             }

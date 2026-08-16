@@ -19,7 +19,8 @@ pub fn resolve_close(app: AppHandle, action: String, remember: bool) {
         settings::set_close_action(&app, &action);
     }
 
-    windows::close_window(&app, windows::CLOSE_CONFIRM);
+    // 藏而不关：预创建复用的窗口，销毁即退回现场重建的死锁路径（见 windows）
+    windows::hide_close_confirm(&app);
 
     match action.as_str() {
         "quit" => crate::quit(&app),
@@ -129,7 +130,7 @@ pub async fn upgrade_dsh(app: AppHandle) -> Result<String, String> {
 /// 设置页用：把界面插件升到指定版本（通常是上游最新版），然后重启 dsh。
 ///
 /// `BUNDLE_VERSION` 只是**新装时的已知可用版本**，不是上限。用户显式升上去之后
-/// 引导流程不会把他降回来 —— `plugins::is_installed` 只在「装的比钉死的旧」
+/// 引导流程不会把他降回来 —— `plugins::is_installed` 只在「装的比硬编码的旧」
 /// 时才判定需要重装。
 ///
 /// 和升级 dsh 一样要先停服务：插件里的 cloudflared / ssh2 / cpu-features 带原生
@@ -159,12 +160,27 @@ pub async fn upgrade_plugins(app: AppHandle, version: String) -> Result<(), Stri
 /// 重启整个应用。dsh 升级失败、服务起不来时的兜底。
 ///
 /// 用 `restart()` 而不是 `request_restart()`：后者会走完整的退出事件链，
-/// 而我们在 `on_window_event` 里拦了主窗口的 CloseRequested 去弹关闭确认框 ——
-/// 万一被那条路径接住，重启会卡在一个莫名其妙的对话框上。
-///
+/// 而我们在 `on_window_event` 里拦了主窗口的 CloseRequested 去弹关闭确认框
 /// 跳过退出事件不影响清理：升级前已经显式 shutdown 过 dsh，
 /// 而 Job Object 本来就兜着「进程没了子进程一起走」。
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
     app.restart();
+}
+
+/// 用系统默认程序打开日志文件。
+///
+/// 装机环境千奇百怪（执行策略、nvm4w、代理、镜像），远程排查唯一靠得住的
+#[tauri::command]
+pub fn open_log(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let path = crate::logging::path().ok_or_else(|| "无法定位日志目录".to_string())?;
+    if !path.is_file() {
+        return Err(format!("日志文件还不存在：{}", path.display()));
+    }
+
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| format!("打开日志失败：{e}"))
 }

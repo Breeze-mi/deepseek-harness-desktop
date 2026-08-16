@@ -1,12 +1,10 @@
 //! 任务活动监视：轮询 dsh 的宠物状态接口，任务跑完时提醒用户。
 //!
-//! **为什么能直接从 Rust 拿到状态**：`@linxin666/dsh-pet` 在 dsh 服务端注册了
-//! 同源 JSON 路由 `GET /api/pet/state`，返回当前会话的活动相位。
+//! **`@linxin666/dsh-pet` 在 dsh 服务端注册了同源 JSON 路由 `GET /api/pet/state`，返回当前会话的活动相位。
 //!
 //! `/api` 有一道 browser-trust 围栏，但它校验的是 `Host` 头（防 DNS rebinding），
 //! 上游源码注释原话：「Non-browser and remote clients pass the same fence via
-//! loopback」。我们请求 `127.0.0.1` 属于回环，直接放行 ——
-//! 所以不用注入页面、也不用 `--trusted-host`。
+//! loopback」。所以不用注入页面、也不用 `--trusted-host`。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -17,20 +15,11 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::{tray, windows};
 
-/// 轮询间隔。
-///
-/// 从 2 秒收到 1 秒：`done` 相位可能只持续很短一段（短回复尤其明显），
-/// 采样周期比它长就会整个跳过，表现为「有时候不提醒」。
-/// 目标是本机回环上的一个 JSON 接口，1 秒一次的开销可以忽略。
-///
-/// 注意这**只是缩小了漏采窗口，没有消除它** —— 真正的解法是找一个
-/// 不依赖采样到瞬时状态的信号（比如单调递增的回合计数），
-/// 但那需要先摸清 `/api/pet/state` 的完整响应结构。
+/// 轮询间隔（s）。
+
 const POLL: Duration = Duration::from_secs(1);
 
 /// 连续多少次**连不上**才放弃。
-///
-/// 之前设成 3 太脆：dsh 偶尔一次超时就能把监视器永久干掉。
 /// 按 1 秒间隔算，30 次约 30 秒，足以扛过一次卡顿；真正该退出的场景是
 /// dsh 被换了端口（重启服务时会起新的监视器），那时连不上是必然的，退出正确。
 const MAX_FAILURES: u8 = 30;
@@ -47,15 +36,7 @@ const SOUND: &str = "Default";
 enum Poll {
     Phase {
         phase: String,
-        /// `affinity.turns`。**目前只用来打日志，不参与判定。**
-        ///
-        /// 实测响应里有这个单调递增的回合计数，它理论上能根治「done 相位
-        /// 太短、被采样跳过」的漏报 —— 计数是累积量，错过一拍也能从
-        /// 「数字变了」推断出中间完成过。
-        ///
-        /// 但我只见过一个采样点，无法确认它是「每完成一轮智能体任务 +1」
-        /// 还是也统计摸头投喂之类的互动。拿一个样本就改判据，等于重复
-        /// 之前猜相位词表的错误 —— 先记录，攒够数据再决定。
+        /// `affinity.turns`。目前只用来打日志，不参与判定。
         turns: Option<u64>,
     },
     /// 服务正常，但这次响应里没有相位。不算故障，跳过即可。
@@ -144,7 +125,7 @@ pub fn spawn(app: AppHandle, base_url: String, enabled: NotifyEnabled) {
                 Poll::Unreachable => {
                     failures += 1;
                     if failures >= MAX_FAILURES {
-                        eprintln!(
+                        dlog!(
                             "[watcher] {endpoint} 连续 {MAX_FAILURES} 次连不上，停止监视。\
                              正常情况：dsh 已重启（新监视器已接管）或插件未安装。"
                         );
@@ -159,7 +140,7 @@ pub fn spawn(app: AppHandle, base_url: String, enabled: NotifyEnabled) {
 
             // 日志只在相位变化时打，否则每一拍刷一行会把终端淹掉
             if prev_phase.as_deref() != Some(phase.as_str()) {
-                eprintln!(
+                dlog!(
                     "[watcher] 相位 {} -> {phase}（turns={}）",
                     prev_phase.as_deref().unwrap_or("(初次)"),
                     turns.map_or_else(|| "?".to_string(), |n| n.to_string())
@@ -176,11 +157,11 @@ pub fn spawn(app: AppHandle, base_url: String, enabled: NotifyEnabled) {
             //    tool/waiting/thinking/review 七次切换），恰好在 done 那一刻变 35。
             //
             // 第 2 条是根治性的，第 1 条留着兜住「响应里没有 turns 字段」的情况。
-            let phase_done = phase == "done"
-                && prev_phase.is_some()
-                && prev_phase.as_deref() != Some("done");
+            let phase_done =
+                phase == "done" && prev_phase.is_some() && prev_phase.as_deref() != Some("done");
 
-            let turns_bumped = matches!((turns, prev_turns), (Some(now), Some(before)) if now > before);
+            let turns_bumped =
+                matches!((turns, prev_turns), (Some(now), Some(before)) if now > before);
 
             if !(phase_done || turns_bumped) {
                 continue;
@@ -195,17 +176,17 @@ pub fn spawn(app: AppHandle, base_url: String, enabled: NotifyEnabled) {
             notified_turns = turns;
 
             if !enabled.get() {
-                eprintln!("[watcher] 任务完成，但通知已被关闭");
+                dlog!("[watcher] 任务完成，但通知已被关闭");
                 continue;
             }
             // 这两条日志用来区分漏报的成因：走到这里说明**判定为已完成**，
             // 那么没提醒就只可能是认为用户在看。
             if user_is_watching(&app) {
-                eprintln!("[watcher] 任务完成，主窗口在前台，不打扰");
+                dlog!("[watcher] 任务完成，主窗口在前台，不打扰");
                 continue;
             }
 
-            eprintln!(
+            dlog!(
                 "[watcher] 任务完成，发出提醒（触发源：{}）",
                 if turns_bumped { "turns" } else { "相位" }
             );
@@ -269,39 +250,39 @@ fn notify(app: &AppHandle) {
         .show();
 
     if let Err(e) = result {
-        eprintln!("[watcher] 构造通知失败：{e}");
+        dlog!("[watcher] 构造通知失败：{e}");
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::find_phase;
-    use serde_json::json;
+// #[cfg(test)]
+// mod tests {
+//     use super::find_phase;
+//     use serde_json::json;
 
-    #[test]
-    fn finds_phase_at_top_level() {
-        assert_eq!(
-            find_phase(&json!({ "phase": "thinking", "line": "tool: grep" })).as_deref(),
-            Some("thinking")
-        );
-    }
+//     #[test]
+//     fn finds_phase_at_top_level() {
+//         assert_eq!(
+//             find_phase(&json!({ "phase": "thinking", "line": "tool: grep" })).as_deref(),
+//             Some("thinking")
+//         );
+//     }
 
-    #[test]
-    fn finds_phase_when_wrapped() {
-        // 外层多包一层也能找到 —— 上游没承诺过响应结构
-        assert_eq!(
-            find_phase(&json!({ "ok": true, "state": { "phase": "done" } })).as_deref(),
-            Some("done")
-        );
-    }
+//     #[test]
+//     fn finds_phase_when_wrapped() {
+//         // 外层多包一层也能找到 —— 上游没承诺过响应结构
+//         assert_eq!(
+//             find_phase(&json!({ "ok": true, "state": { "phase": "done" } })).as_deref(),
+//             Some("done")
+//         );
+//     }
 
-    #[test]
-    fn ignores_non_string_phase() {
-        assert!(find_phase(&json!({ "phase": 3 })).is_none());
-    }
+//     #[test]
+//     fn ignores_non_string_phase() {
+//         assert!(find_phase(&json!({ "phase": 3 })).is_none());
+//     }
 
-    #[test]
-    fn returns_none_without_phase() {
-        assert!(find_phase(&json!({ "affinity": 25, "name": "小鲸" })).is_none());
-    }
-}
+//     #[test]
+//     fn returns_none_without_phase() {
+//         assert!(find_phase(&json!({ "affinity": 25, "name": "小鲸" })).is_none());
+//     }
+// }

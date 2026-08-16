@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-harness-desktop"
-version = "0.2.0"
+version = "0.3.0"
 description = "DeepSeek Harness 桌面版"
 authors = ["Breeze-mi"]
 edition = "2021"
@@ -17,15 +17,20 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
-tauri-plugin-shell = "2"
-tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-notification = "2"
+# 运行日志：标准 log 门面 + 官方插件承担写入（分级、依赖库与前端日志都能进来）。
+# 轮转仍用我们自己的「每启动 rename」——插件默认「到上限即丢弃」是官方文档明写的坑。
+log = "0.4"
+tauri-plugin-log = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 dirs = "6"
+# 日志时间戳（本地时区墙钟）。default-features=false：只要 clock，
+# 别把 wasm/serde 那一坨默认特性拖进来
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 # 引导流程：下载便携 Node、校验、解压
 reqwest = { version = "0.12", default-features = false, features = [

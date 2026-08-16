@@ -8,13 +8,20 @@ const remember = ref(false);
 async function choose(action: CloseAction) {
   // cancel 不允许被记住，否则用户下次就永远关不掉窗口了
   await api.resolveClose(action, action === "cancel" ? false : remember.value);
+  // 这个窗口是隐藏复用的，不会重建重挂载 —— 勾选状态要手动归零，
+  // 否则「勾了记住但点了取消」之后，下次弹出来还带着上次的勾
+  remember.value = false;
 }
 </script>
 
 <template>
-  <div class="box">
-    <div class="title">关闭 DeepSeek Harness</div>
-    <div class="desc">最小化到托盘后，dsh 服务会继续在后台运行。</div>
+  <!-- data-tauri-drag-region 只对元素本身生效、不含子元素，
+       所以标题和说明文字也要各自标注，按钮和勾选框保持可点 -->
+  <div class="box" data-tauri-drag-region>
+    <div class="title" data-tauri-drag-region>关闭 DeepSeek Harness</div>
+    <div class="desc" data-tauri-drag-region>
+      最小化到托盘后，dsh 服务会继续在后台运行。
+    </div>
 
     <label class="remember">
       <input v-model="remember" type="checkbox" />
@@ -31,7 +38,9 @@ async function choose(action: CloseAction) {
 
 <style scoped>
 .box {
+  /* 铺满窗口、零外边距、零圆角。 */
   height: 100%;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -39,7 +48,6 @@ async function choose(action: CloseAction) {
   padding: 20px 22px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
 }
 
 .title {

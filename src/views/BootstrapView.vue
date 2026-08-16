@@ -24,22 +24,38 @@ const barPercent = computed(() => {
   return Math.max(4, ((p.index - 1 + within) / p.total) * 100);
 });
 
+/** 已就绪，但有东西没装上 —— 停在这一屏等用户确认，不自动跳走 */
+const heldByWarning = computed(() => !!store.warning && !!store.readyUrl);
+
 const title = computed(() => {
   if (store.error) {
     return store.error.severity === "pending" ? "尚未完成" : "启动失败";
   }
+  if (heldByWarning.value) return "已就绪，但有一项没装上";
   return store.progress ? `${store.progress.label}…` : "正在启动…";
 });
 
-// detail 里带的是「做成了什么」，攒起来当作已完成事实
+// detail 里带的是「做成了什么」，攒起来当作已完成事实。
+// 瞬态进度（下载字节数、安装计数）除外 —— 那些一秒好几条，
+// 进了列表就会把真正的里程碑挤掉（真机截图里出现过两条 30/31、31/31）。
 watch(
-  () => store.progress?.detail,
-  (detail) => {
-    if (!detail) return;
+  () => store.progress,
+  (p) => {
+    const detail = p?.detail;
+    if (!detail || p?.transient) return;
     if (facts.value.at(-1) === detail) return;
     facts.value = [...facts.value, detail].slice(-MAX_FACTS);
   },
 );
+
+/** 瞬态进度的展示位：进度条下方单独一行，被下一条覆盖，不留痕 */
+const activity = computed(() => {
+  const p = store.progress;
+  return p?.transient && p.detail ? p.detail : "";
+});
+
+/** 没有真实比例时进度条打脉冲，让「在跑」和「卡死」看得出区别 */
+const indeterminate = computed(() => store.progress?.fraction == null);
 
 function restart() {
   facts.value = [];
@@ -57,19 +73,26 @@ onUnmounted(() => {
   store.dispose();
 });
 
+function enter() {
+  if (store.readyUrl) window.location.replace(store.readyUrl);
+}
+
 // 就绪后把主窗口整体导航到 DSH Web UI。
 // 从这一刻起本 Vue 应用就不在主窗口里了 —— 设置等自有 UI 走独立窗口承载。
+//
+// **有警告时不自动跳。** 一跳转这个页面就没了，警告也跟着消失，
+// 用户只会得到一个「莫名其妙少了鲸鱼娘」的界面，根本联想不到是安装环节出的事。
 watch(
-  () => store.readyUrl,
-  (url) => {
-    if (url) window.location.replace(url);
+  [() => store.readyUrl, () => store.warning],
+  ([url, warning]) => {
+    if (url && !warning) enter();
   },
 );
 </script>
 
 <template>
   <div class="wrap">
-    <div class="ring" :class="{ stopped: !!store.error }" />
+    <div class="ring" :class="{ stopped: !!store.error || heldByWarning }" />
 
     <div class="body">
       <div class="title" :class="{ bad: store.error?.severity === 'error' }">
@@ -89,15 +112,32 @@ watch(
           <button v-if="store.error.retryable" class="primary" @click="restart">
             重试
           </button>
+          <button @click="api.openLog()">打开日志</button>
           <button @click="api.openSettings()">设置</button>
+        </div>
+      </template>
+
+      <template v-else-if="heldByWarning">
+        <div class="msg warn">{{ store.warning }}</div>
+        <div class="actions">
+          <button class="primary" @click="enter">继续使用</button>
+          <button @click="restart">重试安装</button>
+          <button @click="api.openLog()">打开日志</button>
         </div>
       </template>
 
       <template v-else>
         <div class="bar">
-          <div class="bar-fill" :style="{ width: `${barPercent}%` }" />
+          <div
+            class="bar-fill"
+            :class="{ pulse: indeterminate }"
+            :style="{ width: `${barPercent}%` }"
+          />
         </div>
-        <div class="elapsed">已用时 {{ elapsed }} 秒</div>
+        <div class="meta">
+          <span class="activity">{{ activity }}</span>
+          <span>已用时 {{ elapsed }} 秒</span>
+        </div>
       </template>
     </div>
   </div>
@@ -183,11 +223,32 @@ watch(
   transition: width 0.35s ease;
 }
 
-.elapsed {
+/* 没有真实比例时打脉冲：静止的满色条和卡死没法区分 */
+.bar-fill.pulse {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.meta {
   margin-top: 8px;
-  text-align: right;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
   font-size: 12px;
   color: var(--text-dim);
+  /* 固定高度：activity 在空与非空之间切换时布局不能跳 */
+  min-height: 18px;
+}
+
+.activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .msg {
@@ -195,6 +256,18 @@ watch(
   line-height: 1.6;
   user-select: text;
   font-size: 13px;
+}
+
+/* 警告不是崩溃：给一条边而不是整段红字，别吓人 */
+.msg.warn {
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn, var(--accent));
+  border-radius: 6px;
+  /* 警告可能携带 pnpm 的整段输出，滚动收纳，别把按钮挤出窗口 */
+  max-height: 180px;
+  overflow-y: auto;
 }
 
 .hint {

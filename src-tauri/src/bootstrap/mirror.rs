@@ -20,6 +20,10 @@ pub const NODE_OFFICIAL: &str = "https://nodejs.org/dist";
 ///
 /// 已实测 npmmirror 的 `index.json` 与官方同构（字段名、lts 语义都一样），
 /// 所以版本发现逻辑一套代码通吃，不需要按源分支。
+///
+/// **这里的顺序只是兜底基线**：实际尝试顺序由 download.rs 的
+/// `rank_mirrors` 在运行时测速决定 —— 写死的顺序表达不了
+/// 「镜像活着但被限速」这种当下状态。
 pub const NODE_MIRRORS: &[Mirror] = &[
     Mirror {
         name: "阿里云 npmmirror",

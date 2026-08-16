@@ -76,27 +76,29 @@ pub async fn restart(app: AppHandle) -> std::result::Result<String, String> {
     let entry = crate::settings::dsh_entry(&app)
         .ok_or_else(|| "找不到 dsh 安装位置，请重启应用重新引导".to_string())?;
 
-    let node = node::detect_system_node()
+    // Node 选择与引导保持**会话内一致**：引导选过便携版（登记过 NODE_DIR）
+    // 就直接沿用 —— 此时再探测裸 `node` 会被我们注入的 PATH 命中便携版自己，
+    // 结果一样但会被误标成「系统 Node」
+    let node = crate::bootstrap::proc::node_dir()
+        .and_then(|_| download::installed_portable_node())
+        .or_else(node::detect_system_node)
         .or_else(download::installed_portable_node)
         .ok_or_else(|| "找不到可用的 Node.js 运行时".to_string())?;
 
     app.state::<DshState>().shutdown();
 
-    // **spawn 和 wait_for_url 必须一起放进阻塞线程池。**
-    // wait_for_url 内部是 `recv_timeout`，标准库的同步阻塞调用；
-    // 直接在 async 里 await 不到它，只会把一个 tokio worker 占死最多 60 秒。
-    let (handle, url) = tokio::task::spawn_blocking(
-        move || -> crate::error::Result<(DshHandle, String)> {
-            let (handle, rx) = process::spawn(&node, &entry)?;
-            let url = process::wait_for_url(&rx, 60)?;
-            Ok((handle, url))
-        },
-    )
-    .await
-    .map_err(|e| format!("重启任务异常退出：{e}"))?
-    .map_err(|e| e.to_string())?;
+    // spawn 与等 URL 都是同步阻塞调用，必须进阻塞线程池，别占 async worker。
+    // 120s：升级/重启往往紧跟着一批新写入的文件，首次 boot 可能被杀毒扫描
+    // 拖慢 —— 引导处曾实测 60s 误杀健康进程
+    let (handle, url) =
+        tokio::task::spawn_blocking(move || process::spawn_and_wait(&node, &entry, 120, |_, _| {}))
+            .await
+            .map_err(|e| format!("重启任务异常退出：{e}"))?
+            .map_err(|e| e.to_string())?;
 
-    health::wait_ready(&url, 60).await.map_err(|e| e.to_string())?;
+    health::wait_ready(&url, 60)
+        .await
+        .map_err(|e| e.to_string())?;
 
     app.state::<DshState>().set(handle, url.clone());
 
@@ -108,7 +110,7 @@ pub async fn restart(app: AppHandle) -> std::result::Result<String, String> {
             }
             // 这里不 return Err：服务其实已经起来了，报错会让设置页显示
             // 「服务已停止，请重启应用」，与事实相反。只记日志。
-            Err(e) => eprintln!("[runtime] dsh 返回的地址无法解析（{url}）：{e}"),
+            Err(e) => dlog!("[runtime] dsh 返回的地址无法解析（{url}）：{e}"),
         }
     }
 

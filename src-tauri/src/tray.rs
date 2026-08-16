@@ -6,7 +6,7 @@ use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager,
+    AppHandle,
 };
 
 use crate::windows;
@@ -38,14 +38,22 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     }
 
     builder
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => windows::show_main(app),
-            "settings" => windows::open_settings(app),
-            "restart_dsh" => restart_dsh(app.clone()),
-            // 版本检查在设置页的「版本与更新」卡片里，页面挂载时会自动查一次
-            "check_update" => windows::open_settings(app),
-            "quit" => crate::quit(app),
-            _ => {}
+        .on_menu_event(|app, event| {
+            // 菜单回调也在事件循环分发现场，open_settings 首次会建窗口 ——
+            // 全部 spawn 出去（死锁机理见 windows::create_close_confirm）
+            let app = app.clone();
+            let id = event.id.as_ref().to_string();
+            tauri::async_runtime::spawn(async move {
+                match id.as_str() {
+                    "show" => windows::show_main(&app),
+                    "settings" => windows::open_settings(&app),
+                    "restart_dsh" => restart_dsh(app.clone()),
+                    // 版本检查在设置页的「版本与更新」卡片里，页面挂载时会自动查一次
+                    "check_update" => windows::open_settings(&app),
+                    "quit" => crate::quit(&app),
+                    _ => {}
+                }
+            });
         })
         .on_tray_icon_event(|tray, event| {
             // 左键单击直接显示主窗口，符合 Windows 习惯
@@ -68,12 +76,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 /// 整个过程要几秒到几十秒（停服务 → 起新进程 → 等就绪 → 导航），
 /// 菜单回调里不能干等，所以扔到异步运行时。
 ///
-/// 失败要发系统通知而不是只写日志：这条路走到一半时主窗口多半已经白屏，
-/// 用户看不到任何解释，只会以为软件崩了。
+/// 失败时发系统通知
 fn restart_dsh(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         if let Err(e) = crate::runtime::restart(app.clone()).await {
-            eprintln!("[tray] 重启 dsh 失败：{e}");
+            dlog!("[tray] 重启 dsh 失败：{e}");
 
             use tauri_plugin_notification::NotificationExt;
             let _ = app
@@ -122,9 +129,7 @@ pub fn start_blink(app: &AppHandle) {
         let icon = app.default_window_icon().cloned();
         let mut visible = false;
 
-        while BLINKING.load(Ordering::SeqCst)
-            && BLINK_GEN.load(Ordering::SeqCst) == generation
-        {
+        while BLINKING.load(Ordering::SeqCst) && BLINK_GEN.load(Ordering::SeqCst) == generation {
             if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 let _ = tray.set_icon(if visible { icon.clone() } else { None });
             }

@@ -170,7 +170,12 @@ onMounted(async () => {
   <div class="page">
     <header class="head">
       <h1>设置</h1>
-      <button @click="back">关闭</button>
+      <div class="head-actions">
+        <!-- 日志入口放在最显眼处：装机环境（执行策略、nvm4w、代理、镜像）
+             千差万别，出问题时这个文件是唯一靠得住的线索 -->
+        <button @click="api.openLog()">打开日志</button>
+        <button @click="back">关闭</button>
+      </div>
     </header>
 
     <section class="card">
@@ -338,6 +343,11 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 18px;
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
 }
 
 h1 {

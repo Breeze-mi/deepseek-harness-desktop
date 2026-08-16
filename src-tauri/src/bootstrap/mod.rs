@@ -14,6 +14,13 @@ pub mod upgrade;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// 「已经自动重启过一次」的标记，随 `AppHandle::restart` 传给下一代进程。
+///
+/// dsh 偶发起不来时我们会整个重启应用再试（见 `pipeline`）。用环境变量而不是
+/// 文件做标记：重启出来的子进程天然继承环境，而用户手动重开应用时环境是
+/// 干净的 —— 于是「每次人工启动最多自动重启一次」，构造上不可能循环。
+const RELAUNCH_ENV: &str = "DSH_DESKTOP_AUTO_RELAUNCHED";
+
 use crate::error::{BootstrapError, ErrorPayload, Result};
 use crate::runtime::{health, process, watcher, DshState};
 use crate::settings;
@@ -21,6 +28,8 @@ use crate::settings;
 pub const EVENT_PROGRESS: &str = "bootstrap:progress";
 pub const EVENT_READY: &str = "bootstrap:ready";
 pub const EVENT_FAILED: &str = "bootstrap:failed";
+/// 非致命问题：引导会继续走完，但用户应该知道少了什么。
+pub const EVENT_WARNING: &str = "bootstrap:warning";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,16 +83,25 @@ pub struct Progress {
     pub stage: Stage,
     pub label: String,
     pub detail: Option<String>,
-    /// 仅下载类阶段有值，0.0 ~ 1.0
+    /// 仅下载/安装类阶段有值，0.0 ~ 1.0
     pub fraction: Option<f64>,
     pub index: u8,
     pub total: u8,
+    /// 瞬态进度（下载字节数、安装计数）：界面上只刷新「当前活动」一行，
+    /// 不进「已完成」列表 —— 否则几十条进度刷屏会把真正的里程碑挤掉。
+    pub transient: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadyPayload {
     pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WarningPayload {
+    pub message: String,
 }
 
 /// 进度上报器。所有阶段共用，保证事件格式一致。
@@ -110,6 +128,7 @@ impl Reporter {
             fraction: None,
             index: stage.index(),
             total: Stage::TOTAL,
+            transient: false,
         });
     }
 
@@ -121,6 +140,21 @@ impl Reporter {
             fraction: None,
             index: stage.index(),
             total: Stage::TOTAL,
+            transient: false,
+        });
+    }
+
+    /// 瞬态活动：马上会被下一条覆盖的那种进度（安装计数、校验中）。
+    /// 带 fraction 时进度条会真的动起来，而不是停在阶段起点干等。
+    pub fn activity(&self, stage: Stage, detail: impl Into<String>, fraction: Option<f64>) {
+        self.emit(Progress {
+            stage,
+            label: stage.label().to_string(),
+            detail: Some(detail.into()),
+            fraction,
+            index: stage.index(),
+            total: Stage::TOTAL,
+            transient: true,
         });
     }
 
@@ -134,6 +168,7 @@ impl Reporter {
             _ => (format!("{:.1} MB", mb(done)), None),
         };
 
+        // 字节数是典型的瞬态信息，一秒好几条，进不得「已完成」列表
         self.emit(Progress {
             stage,
             label: stage.label().to_string(),
@@ -141,6 +176,7 @@ impl Reporter {
             fraction,
             index: stage.index(),
             total: Stage::TOTAL,
+            transient: true,
         });
     }
 
@@ -148,8 +184,17 @@ impl Reporter {
         let _ = self.app.emit(EVENT_READY, ReadyPayload { url: url.into() });
     }
 
+    /// 非致命问题。引导继续走完，但要留下用户看得见的痕迹 ——
+    /// 悄悄跳过的后果是「软件看起来好了，但功能莫名其妙少一块」，
+    /// 那种故障用户根本不会联想到安装环节。
+    pub fn warn(&self, message: impl Into<String>) {
+        let message = message.into();
+        dlog!("[bootstrap] 警告：{message}");
+        let _ = self.app.emit(EVENT_WARNING, WarningPayload { message });
+    }
+
     pub fn fail(&self, err: &BootstrapError) {
-        eprintln!("[bootstrap] 失败: {err}");
+        dlog!("[bootstrap] 失败: {err}");
         let _ = self.app.emit(EVENT_FAILED, ErrorPayload::from(err));
     }
 }
@@ -170,31 +215,80 @@ pub async fn run(app: AppHandle) {
 
 async fn pipeline(app: &AppHandle, reporter: &Reporter) -> Result<String> {
     let node = ensure_node(reporter).await?;
-    let entry = ensure_dsh(app, &node, reporter).await?;
+
+    // 选定 Node 之后立刻登记它的目录：从这里开始，我们启动的每个子进程
+    // 都会带上「这个 Node 的目录 + npm 全局 prefix」的 PATH。
+    // 没有这一步，无 Node 的机器上后面的 npm 与 pnpm 全都找不到。
+    if let Some(dir) = node.path.parent() {
+        proc::set_node_dir(dir.to_path_buf());
+    }
+
+    let entry = ensure_dsh(app, reporter).await?;
 
     // dsh 首次运行会自行创建 ~/.dsh 与 web profile，不需要显式 init
     reporter.stage(Stage::InitProfile);
 
-    // 界面插件（鲸鱼娘 / 任务看板 / 皮肤中心都在这个包里）
-    ensure_plugins(&node, &entry, reporter).await?;
+    // 界面插件（鲸鱼娘 / 任务看板 / 皮肤中心都在这个包里）。
+    //
+    // **装不上不阻断启动。** DSH 本体不依赖它们 —— 两个参考实现
+    // （Buktal/deepseek-desktop、steven-kid/deepseek-harness-desktop）
+    // 压根不装插件，照样是能用的桌面版。装失败顶多少了鲸鱼娘和任务看板；
+    // 而把整条启动流程拦下，等于把「本来能用的 DSH」也一起弄没了。
+    // 两边代价差得太远，这里必须放行。
+    if let Err(e) = ensure_plugins(&node, &entry, reporter).await {
+        reporter.warn(format!(
+            "界面插件未安装成功（{e}）。DSH 可正常使用，但鲸鱼娘、任务看板等界面功能不会出现，可稍后在设置页重装。"
+        ));
+    }
 
     // ---- 启动 dsh ----
     reporter.stage(Stage::StartingDsh);
+    // 预期管理：首启/刚更新后的 boot 可能被杀毒扫描新文件拖到一两分钟，
+    // 不说明的话用户只能对着计时器怀疑卡死。瞬态提示，不进「已完成」列表。
+    reporter.activity(
+        Stage::StartingDsh,
+        "正在启动服务；首次启动可能需要一两分钟",
+        None,
+    );
 
     // **必须放进阻塞线程池。** `wait_for_url` 内部是 `recv_timeout`，
     // 标准库的同步阻塞调用 —— 直接在 async 里跑会把一个 tokio worker
-    // 占死最多 60 秒，期间连进度事件都推不出去。
+    // 占死最多两分钟，期间连进度事件都推不出去。
     let node_for_spawn = node.clone();
     let entry_for_spawn = entry.clone();
-    let (handle, url) = tokio::task::spawn_blocking(
-        move || -> Result<(process::DshHandle, String)> {
-            let (handle, rx) = process::spawn(&node_for_spawn, &entry_for_spawn)?;
-            let url = process::wait_for_url(&rx, 60)?;
-            Ok((handle, url))
-        },
-    )
+    let rep_for_spawn = reporter.clone();
+    // 120 秒而不是 60。真机复现：首次安装完成后的第一次 boot，dsh 曾整整
+    // 60 秒零输出（刚写入的两千多个文件正被杀毒软件实时扫描，Node 加载
+    // 被拖爆），到点即被误杀
+    let started = tokio::task::spawn_blocking(move || {
+        process::spawn_and_wait(&node_for_spawn, &entry_for_spawn, 120, |n, total| {
+            rep_for_spawn.activity(
+                Stage::StartingDsh,
+                format!("dsh 启动未成功，自动重试（{n}/{total}）…"),
+                None,
+            );
+        })
+    })
     .await
-    .map_err(|e| BootstrapError::Other(format!("启动任务异常退出：{e}")))??;
+    .map_err(|e| BootstrapError::Other(format!("启动任务异常退出：{e}")))?;
+
+    // dsh 上游存在偶发启动竞态：同一份安装，这次 boot 加载不了它自己的
+    // `@deepseek-ai/*` 组件（ERR_MODULE_NOT_FOUND 一崩一大片），重开又全好。
+    // 真机多轮复现：与是否刚安装过**无关**，纯启动也会撞上，包始终在盘上。
+    //
+    // 进程内已经连掷了三把（见 spawn_and_wait）；仍失败就把整个应用重启一次
+    // 再掷 —— 真机上「彻底退出重进」是命中率最高的动作。环境变量做一次性
+    // 标记：重启出来的进程带着它，不会再次自动重启，构造上不可能循环。
+    let (handle, url) = match started {
+        Ok(pair) => pair,
+        Err(BootstrapError::DshExitedEarly) if std::env::var_os(RELAUNCH_ENV).is_none() => {
+            dlog!("[bootstrap] dsh 多次提前退出，自动重启应用再试一轮");
+            reporter.detail(Stage::StartingDsh, "dsh 启动异常，正在重启应用重试…");
+            std::env::set_var(RELAUNCH_ENV, "1");
+            app.restart();
+        }
+        Err(e) => return Err(e),
+    };
 
     // 句柄交给 managed state 保管。若只放局部变量，函数返回时会被 drop，
     // Drop 实现会把刚起来的 dsh 直接杀掉。
@@ -255,8 +349,9 @@ async fn ensure_node(reporter: &Reporter) -> Result<node::NodeInfo> {
 
 /// 安装界面插件并自检。
 ///
-/// 装不上的表现是「DSH 能用但侧边栏空空、鲸鱼娘不出现」，用户只会以为软件坏了，
-/// 所以自检失败必须明确报错，不能静默放过。
+/// 装不上的表现是「DSH 能用但侧边栏空空、鲸鱼娘不出现」，用户只会以为软件坏了。
+/// 自检结果分级：聚合包整体缺失才算硬失败，其余降级为警告继续放行
+/// （分级理由见 plugins.rs 模块头）。
 async fn ensure_plugins(
     node: &node::NodeInfo,
     entry: &std::path::Path,
@@ -269,16 +364,32 @@ async fn ensure_plugins(
     let rep = reporter.clone();
 
     tokio::task::spawn_blocking(move || -> Result<()> {
-        if plugins::is_installed() {
+        // 早先的版本会在 dsh 之前抢写 pnpm-workspace.yaml，害 pnpm 用错
+        // node_modules 布局。中招的机器上那份文件还在，先删掉并强制重装一次。
+        let repaired = plugins::repair_stale_workspace();
+
+        if !repaired && plugins::is_installed() {
             rep.detail(Stage::InstallingPlugins, "界面插件已就绪");
         } else {
+            // dsh 装插件时在内部调 pnpm。干净机器上没有它，
+            // 失败信息只会是 dsh 吐出的一个退出码 1 加一行
+            // 「'pnpm' 不是内部或外部命令」，很难定位到根因，
+            // 所以在这里先补齐，而不是等它炸。
+            if !dsh::pnpm_available() {
+                rep.detail(Stage::InstallingPlugins, "正在安装 pnpm");
+                dsh::install_pnpm()?;
+            }
+
             // 首次安装要拉几十个子包，可能几分钟
             plugins::install(&node, &entry, &rep)?;
         }
 
         rep.stage(Stage::VerifyingPlugins);
-        plugins::verify(&node, &entry)?;
-        rep.detail(Stage::VerifyingPlugins, "插件校验通过");
+        // 自检只有「聚合包整个没装上」才返回 Err。子包对不上返回警告，照常放行。
+        match plugins::verify(&node, &entry)? {
+            Some(warning) => rep.warn(warning),
+            None => rep.detail(Stage::VerifyingPlugins, "插件校验通过"),
+        }
         Ok(())
     })
     .await
@@ -287,16 +398,14 @@ async fn ensure_plugins(
 
 /// 定位 dsh，没有就装。
 ///
-/// 缓存命中时跳过 `npm root -g`（npm 冷启动 1-2s）与 `dsh --version`（0.5-1s）。
-/// 这两步是每次启动最大的固定开销，而它们的结果几乎从不变化。
+/// 缓存命中时跳过 `npm root -g`（npm 冷启动 1-2s）—— 这是每次启动最大的
+/// 固定开销，而结果几乎从不变化。已装版本一律读 package.json，**从不起
+/// 子进程问 `--version`**：那要冷启动一次 Node，杀毒扫描时能拖到好几秒，
+/// 而这一步正好在首启的关键路径上。
 ///
 /// npm 安装是阻塞的且可能跑 1-3 分钟，必须扔到阻塞线程池 ——
 /// 直接在 async 上下文里跑会占死一个 tokio worker，进度事件都推不出去。
-async fn ensure_dsh(
-    app: &AppHandle,
-    node: &node::NodeInfo,
-    reporter: &Reporter,
-) -> Result<std::path::PathBuf> {
+async fn ensure_dsh(app: &AppHandle, reporter: &Reporter) -> Result<std::path::PathBuf> {
     reporter.stage(Stage::CheckingDsh);
 
     // 快路径：缓存里的路径仍然存在就直接用
@@ -304,13 +413,12 @@ async fn ensure_dsh(
         return Ok(entry);
     }
 
-    let node = node.clone();
     let rep = reporter.clone();
 
     let entry = tokio::task::spawn_blocking(move || -> Result<std::path::PathBuf> {
         match dsh::entry_point()? {
             Some(entry) => {
-                let label = match dsh::installed_version(&node, &entry) {
+                let label = match upgrade::installed_dsh(&entry) {
                     Some(v) => format!("已安装 dsh {v}"),
                     None => "已安装 dsh".to_string(),
                 };
