@@ -231,7 +231,7 @@ onMounted(async () => {
       <div class="card-title">任务完成通知</div>
       <p class="dim">
         智能体跑完一轮任务时发一条系统通知，并让任务栏图标闪烁提醒。
-        只在主窗口不在前台时提醒 —— 你正看着的时候不打扰。
+        只在主窗口不在前台时提醒。
       </p>
       <div class="row">
         <span class="value">{{ notifyOnDone ? "已开启" : "已关闭" }}</span>
