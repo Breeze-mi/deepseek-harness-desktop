@@ -45,6 +45,7 @@ pub struct VersionStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpgradeReport {
+    pub app: VersionStatus,
     pub dsh: VersionStatus,
     pub bundle: VersionStatus,
 }
@@ -131,7 +132,7 @@ pub async fn check(entry: Option<&Path>) -> UpgradeReport {
         (None, _) => Some("未检测到已安装的 dsh".to_string()),
         (_, None) => Some("无法连接 npm registry，稍后再试".to_string()),
         _ if dsh_upgradable => None,
-        _ => Some("已是最新".to_string()),
+        _ => Some("已是最新版本".to_string()),
     };
 
     // 插件的目标版本是我们硬编码的那个，不是 registry 最新版
@@ -149,10 +150,21 @@ pub async fn check(entry: Option<&Path>) -> UpgradeReport {
         },
         Some(cur) if bundle_upgradable => Some(format!("当前 {cur}，本应用需要 {pinned}")),
         // 装的比硬编码的还新（多半是用户从命令行装的），不动它
-        Some(cur) => Some(format!("当前 {cur}，新于本应用固定的 {pinned}，保持不变")),
+        Some(cur) => Some(format!(
+            "当前版本是 {cur}，高于本应用内置的 {pinned}，保持不变"
+        )),
     };
 
     UpgradeReport {
+        app: VersionStatus {
+            name: "DeepSeek Harness Desktop".to_string(),
+            installed: Some(env!("CARGO_PKG_VERSION").to_string()),
+            target: None,
+            latest: None,
+            latest_is_newer: false,
+            upgradable: false,
+            note: Some("自动更新尚未启用".to_string()),
+        },
         dsh: VersionStatus {
             name: dsh::PACKAGE.to_string(),
             installed: dsh_cur.clone(),

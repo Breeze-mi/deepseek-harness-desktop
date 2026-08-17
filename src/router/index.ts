@@ -11,8 +11,8 @@ import {
 export const routes: RouteRecordRaw[] = [
 	{
 		path: "/",
-		name: "bootstrap",
-		component: () => import("@/views/BootstrapView.vue"),
+		name: "main",
+		component: () => import("@/views/MainView.vue"),
 	},
 	{
 		path: "/settings",

@@ -5,7 +5,7 @@ pub mod watcher;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use process::DshHandle;
 
@@ -37,10 +37,10 @@ impl DshState {
     }
 
     pub fn shutdown(&self) {
-        if let Ok(mut slot) = self.handle.lock() {
-            if let Some(mut h) = slot.take() {
-                h.shutdown();
-            }
+        // 先把句柄从锁里**取出来**再杀：kill + wait + 清锁文件加起来可能有几十毫秒
+        let handle = self.handle.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(mut h) = handle {
+            h.shutdown();
         }
         if let Ok(mut slot) = self.url.lock() {
             *slot = None;
@@ -56,14 +56,9 @@ impl DshState {
 /// 用一个标志挡住，第二次直接告诉用户在忙。
 static RESTARTING: AtomicBool = AtomicBool::new(false);
 
-/// 重启 dsh 服务，但不重启整个应用。托盘菜单的「重启 dsh 服务」走这里。
+/// 重启 dsh 服务，但不重启整个应用。托盘菜单与顶栏的「重启服务」走这里。
 ///
-/// **不能靠给前端 emit 事件来做。** 主窗口在引导完成后已经导航到 DSH 的网页，
-/// 我们自己的 Vue 应用连同它的事件监听器都不在主窗口里了 —— 事件发出去没人接。
-/// 这类活只能全程留在 Rust 侧。
-///
-/// 顺序是刻意的：先把 Node 与入口找齐再停旧服务。反过来的话，一旦探测失败，
-/// 用户就只剩一个被杀掉的 dsh 和一个白屏窗口。
+/// 顺序是刻意的：先把 Node 与入口找齐再停旧服务。反过来的话，一旦探测失败，就只剩一个被杀掉的 dsh 和一个白屏窗口。
 pub async fn restart(app: AppHandle) -> std::result::Result<String, String> {
     use crate::bootstrap::{download, node};
 
@@ -102,17 +97,14 @@ pub async fn restart(app: AppHandle) -> std::result::Result<String, String> {
 
     app.state::<DshState>().set(handle, url.clone());
 
-    // 端口是 OS 重新分配的，一定和之前不同，所以必须把主窗口导过去
-    if let Some(w) = app.get_webview_window(crate::windows::MAIN) {
-        match tauri::Url::parse(&url) {
-            Ok(parsed) => {
-                let _ = w.navigate(parsed);
-            }
-            // 这里不 return Err：服务其实已经起来了，报错会让设置页显示
-            // 「服务已停止，请重启应用」，与事实相反。只记日志。
-            Err(e) => dlog!("[runtime] dsh 返回的地址无法解析（{url}）：{e}"),
-        }
-    }
+    // 端口是 OS 重新分配的，一定和之前不同，得让界面换到新地址。
+    //
+    // 发事件就够 —— 外壳（我们的 Vue）常驻主窗口，DSH 装在它的 iframe 里，
+    // 收到 ready 换个 src 即可，不必导航整个窗口。
+    let _ = app.emit(
+        crate::bootstrap::EVENT_READY,
+        crate::bootstrap::ReadyPayload { url: url.clone() },
+    );
 
     // 旧的监视器还指着已经死掉的端口，它会连续连不上若干次后自行退出，不用管
     watcher::spawn(

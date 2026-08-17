@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "自有 UI 窗口的权限。主窗口在引导完成后会导航到 dsh 的远程页面，届时不再使用这些 IPC。",
+  "description": "自有 UI 窗口的权限。主窗口去掉了原生标题栏（decorations:false），拖动与最小化/最大化/关闭都由外壳自绘的标题栏经这些 IPC 完成；DSH 页面装在 iframe 里，不使用 IPC。",
   "windows": ["main", "settings", "close-confirm"],
   "permissions": [
     "core:default",
@@ -10,6 +10,12 @@
     "core:window:allow-show",
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-is-maximized",
     "log:default",
     "store:default",
     "process:default",

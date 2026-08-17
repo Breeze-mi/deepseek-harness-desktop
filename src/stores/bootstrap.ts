@@ -14,6 +14,10 @@ export const useBootstrapStore = defineStore("bootstrap", () => {
 	const warning = ref<string | null>(null);
 	const readyUrl = ref<string | null>(null);
 	const running = ref(false);
+	/**
+	 * 是否已经进入 DSH 界面。
+	 */
+	const entered = ref(false);
 
 	let unlisteners: UnlistenFn[] = [];
 
@@ -50,6 +54,7 @@ export const useBootstrapStore = defineStore("bootstrap", () => {
 		// 必须一起清掉：留着的话，「重试」清空 warning 的瞬间跳转条件
 		// （有 url 且无 warning）就成立了，会直接跳进 DSH，重试根本跑不起来。
 		readyUrl.value = null;
+		entered.value = false;
 		running.value = true;
 
 		try {
@@ -65,10 +70,13 @@ export const useBootstrapStore = defineStore("bootstrap", () => {
 		}
 	}
 
-	function dispose() {
-		unlisteners.forEach((fn) => fn());
-		unlisteners = [];
-	}
-
-	return { progress, error, warning, readyUrl, running, start, dispose };
+	return {
+		progress,
+		error,
+		warning,
+		readyUrl,
+		running,
+		entered,
+		start,
+	};
 });

@@ -1,13 +1,27 @@
 //! 窗口创建与管理。
 //!
-//! 主窗口在引导完成后会导航到 DSH 的 Web UI —— 那之后我们自己的 Vue 应用
-//! 就不在主窗口里了。所以设置、关闭确认这类自有 UI 必须开独立窗口承载
+//! 主窗口常驻我们的外壳（自绘标题栏 + iframe 装 DSH），本应用全部窗口都是
+//! decorations:false —— 原生标题栏不跟应用主题走，留着就是一块补不上的色差。
+//! 设置与关闭确认仍是独立窗口：设置要能从托盘直接打开（主窗口可能藏着），
+//! 关闭确认要置顶在一切之上。
 
+use tauri::webview::Color;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const MAIN: &str = "main";
 pub const SETTINGS: &str = "settings";
 pub const CLOSE_CONFIRM: &str = "close-confirm";
+
+/// 新窗口的底色，按当前主题给。
+///
+/// 不给的话 WebView2 的默认底是白的：窗口一出现、以及每次缩放重绘的间隙，都会闪一下
+fn window_bg(app: &AppHandle) -> Color {
+    if crate::theme::current(app) == "light" {
+        Color(255, 255, 255, 255)
+    } else {
+        Color(13, 13, 13, 255)
+    }
+}
 
 /// 所有自有窗口都加载同一个 index.html，前端按 window label 决定渲染哪个视图。
 /// 比在 URL 里拼 hash 路由稳，也不用担心打包后路径变化。
@@ -66,6 +80,11 @@ pub fn open_settings(app: &AppHandle) {
         .min_inner_size(680.0, 480.0)
         .center()
         .resizable(true)
+        // 与主窗口一致去掉原生边框；页面顶部自绘标题栏，带拖动区和「关闭」按钮
+        .decorations(false)
+        // 先藏着，前端首帧画完由 main.ts 统一 show —— 否则 WebView2 的初始白底会先闪一下
+        .visible(false)
+        .background_color(window_bg(app))
         .build();
 }
 
@@ -98,6 +117,7 @@ pub fn create_close_confirm(app: &AppHandle) {
         .always_on_top(true)
         .skip_taskbar(true)
         .visible(false)
+        .background_color(window_bg(app))
         .build();
 }
 

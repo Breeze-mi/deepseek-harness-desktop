@@ -1,88 +1,198 @@
 :root {
-  /* 取自 DSH Web UI 实际配色，保证引导页导航到 DSH 时没有色差跳变 */
-  --bg: #0d0d0d;
-  --surface: #1a1a1a;
-  --surface-2: #232323;
-  --border: #2e2e2e;
-  --text: #ececec;
-  --text-dim: #8f8f8f;
-  --accent: #4d6bfe;
-  --danger: #ff6b6b;
-  --warn: #e8a33d;
-  --ok: #3ecf8e;
+	/* 暗色是默认值。取自 DSH Web UI 实际配色，尽量保证外壳与内嵌页面没有色差 */
+	--bg: #0d0d0d;
+	--surface: #1a1a1a;
+	--surface-2: #232323;
+	--border: #2e2e2e;
+	--text: #ececec;
+	--text-dim: #8f8f8f;
+	--accent: #4d6bfe;
+	--danger: #ff6b6b;
+	--warn: #e8a33d;
+	--ok: #3ecf8e;
+	--hover: #2c2c2c;
+	--hover-border: #3d3d3d;
+	--active: #1f1f1f;
+	--danger-border: #4a2a2a;
+	--danger-text: #ff8f8f;
+	--danger-hover: #2a1c1c;
 
-  font-family: "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-size: 14px;
-  color: var(--text);
-  background: var(--bg);
+	color-scheme: dark;
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+	font-family:
+		"Microsoft YaHei",
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		Roboto,
+		"Helvetica Neue",
+		Arial,
+		sans-serif;
+	font-size: 14px;
+	color: var(--text);
+	background: var(--bg);
+
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/*
+ * 亮色。由 main.ts 按 DSH 自己的主题设置挂上 data-theme —— 权威在 DSH 那边，
+ * 我们只跟随，所以这里不提供任何切换入口。
+ */
+:root[data-theme="light"] {
+	--bg: #ffffff;
+	--surface: #f7f7f8;
+	--surface-2: #ededf0;
+	--border: #e0e0e4;
+	--text: #1c1c1e;
+	--text-dim: #6e6e76;
+	--danger: #d93b3b;
+	--warn: #a86300;
+	--ok: #1a9e6a;
+	--hover: #e4e4e8;
+	--hover-border: #d0d0d6;
+	--active: #dcdce1;
+	--danger-border: #f0cccc;
+	--danger-text: #c62f2f;
+	--danger-hover: #fbeeee;
+
+	color-scheme: light;
 }
 
 * {
-  box-sizing: border-box;
+	box-sizing: border-box;
 }
 
 html,
 body,
 #app {
-  height: 100%;
-  margin: 0;
-  padding: 0;
+	height: 100%;
+	margin: 0;
+	padding: 0;
 }
 
 body {
-  background: var(--bg);
-  /* 引导页不该被选中拖动，桌面应用不是网页 */
-  user-select: none;
+	background: var(--bg);
+	/* 引导页不该被选中拖动，桌面应用不是网页 */
+	user-select: none;
 }
 
 button {
-  font-family: inherit;
-  font-size: 13px;
-  padding: 7px 16px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text);
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+	font-family: inherit;
+	font-size: 13px;
+	padding: 7px 16px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: var(--surface-2);
+	color: var(--text);
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		border-color 0.15s;
 }
 
 button:hover {
-  background: #2c2c2c;
-  border-color: #3d3d3d;
+	background: var(--hover);
+	border-color: var(--hover-border);
 }
 
 button:active {
-  background: #1f1f1f;
+	background: var(--active);
 }
 
 button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 500;
+	background: var(--accent);
+	border-color: var(--accent);
+	color: #fff;
+	font-weight: 500;
 }
 
 button.primary:hover {
-  background: #6079fe;
-  border-color: #6079fe;
+	background: #6079fe;
+	border-color: #6079fe;
 }
 
 button.danger {
-  border-color: #4a2a2a;
-  color: #ff8f8f;
+	border-color: var(--danger-border);
+	color: var(--danger-text);
 }
 
 button.danger:hover {
-  background: #2a1c1c;
+	background: var(--danger-hover);
 }
 
 a {
-  color: var(--accent);
+	color: var(--accent);
+}
+
+.tb {
+	padding: 4px 10px;
+	font-size: 14px;
+	font-weight: 600;
+	border-radius: 5px;
+	border-color: transparent;
+	background: transparent;
+	color: var(--text-dim);
+}
+
+.tb:hover {
+	background: var(--surface-2);
+	border-color: var(--border);
+	color: var(--text);
+}
+
+.tb:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.tb:disabled:hover {
+	background: transparent;
+	border-color: transparent;
+	color: var(--text-dim);
+}
+
+/* 图标按钮：内容是 svg，居中即可 */
+.tb.icon {
+	padding: 4px 8px;
+	display: grid;
+	place-items: center;
+}
+
+/* 窗口控制（最小化/最大化/关闭）：按 Windows 惯例 —— 通高、46px 宽、
+   方角、无圆角无边框；关闭悬停变系统红 */
+.wc {
+	width: 46px;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--text-dim);
+	display: grid;
+	place-items: center;
+	flex: 0 0 auto;
+}
+
+.wc:hover {
+	background: var(--hover);
+	border-color: transparent;
+	color: var(--text);
+}
+
+.wc:active {
+	background: var(--active);
+}
+
+.wc.close:hover {
+	background: #c42b1c;
+	color: #fff;
+}
+
+.wc.close:active {
+	background: #b1271a;
+	color: #fff;
 }

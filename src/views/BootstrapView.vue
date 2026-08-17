@@ -70,18 +70,15 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.clearInterval(ticker);
-  store.dispose();
+  
 });
 
 function enter() {
-  if (store.readyUrl) window.location.replace(store.readyUrl);
+  if (store.readyUrl) store.entered = true;
 }
 
-// 就绪后把主窗口整体导航到 DSH Web UI。
-// 从这一刻起本 Vue 应用就不在主窗口里了 —— 设置等自有 UI 走独立窗口承载。
-//
-// **有警告时不自动跳。** 一跳转这个页面就没了，警告也跟着消失，
-// 用户只会得到一个「莫名其妙少了鲸鱼娘」的界面，根本联想不到是安装环节出的事。
+// 就绪后交给外壳显示 DSH 界面。
+
 watch(
   [() => store.readyUrl, () => store.warning],
   ([url, warning]) => {

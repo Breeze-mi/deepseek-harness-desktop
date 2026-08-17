@@ -47,6 +47,11 @@ export interface ErrorPayload {
 /** 关闭主窗口的三个选项 */
 export type CloseAction = "quit" | "tray" | "cancel";
 
+/**
+ * 设置页里的关闭行为偏好。
+ */
+export type CloseSetting = "ask" | "quit" | "tray";
+
 /** 单个包的版本状态，与 Rust 的 VersionStatus 对应 */
 export interface VersionStatus {
 	name: string;
@@ -62,6 +67,7 @@ export interface VersionStatus {
 }
 
 export interface UpgradeReport {
+	app: VersionStatus;
 	dsh: VersionStatus;
 	bundle: VersionStatus;
 }
@@ -70,3 +76,20 @@ export const EVENT_PROGRESS = "bootstrap:progress";
 export const EVENT_READY = "bootstrap:ready";
 export const EVENT_FAILED = "bootstrap:failed";
 export const EVENT_WARNING = "bootstrap:warning";
+
+/**
+ * 外壳配色跟随 DSH。
+ *
+ * 值由 Rust 读 `$DSH_HOME/settings.yaml` 的 `ui-theme.preference` 解析而来，
+ */
+export interface ThemePayload {
+	theme: "light" | "dark";
+}
+
+export const EVENT_THEME = "app:theme";
+
+/**
+ * 标题栏主题按钮的模式。follow = 跟随 DSH（默认）；
+ * 显式亮/暗由按钮直切，立即生效，不等轮询。
+ */
+export type ThemeMode = "follow" | "light" | "dark";

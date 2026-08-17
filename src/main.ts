@@ -5,11 +5,11 @@ import { error as logError } from "@tauri-apps/plugin-log";
 
 import App from "./App.vue";
 import router from "./router";
+import { api, events } from "@/api";
 import "@/assets/styles/main.css";
 
 // 前端未捕获的错误也进运行日志（%APPDATA%\...\app.log）。
-// 打包后 webview 的 console 没人看得见 —— 引导页/设置页若崩了，
-// 以前只会无声白屏，日志里查无此事。
+
 const label = getCurrentWindow().label;
 window.addEventListener("error", (e) => {
 	void logError(`[web:${label}] ${e.message} @ ${e.filename}:${e.lineno}`);
@@ -38,7 +38,20 @@ const app = createApp(App);
 app.use(createPinia());
 app.use(router);
 
-router.replace(initialPath(getCurrentWindow().label)).finally(() => {
+/**
+ * 外壳配色跟随 DSH。真值在 Rust 侧解析（读 DSH 自己的 settings.yaml），
+ * 这里只负责挂到根元素上，样式表按 `[data-theme="light"]` 覆盖暗色默认值。
+ */
+function applyTheme(theme: string) {
+	document.documentElement.dataset.theme = theme;
+}
+void events.onTheme((p) => applyTheme(p.theme));
+
+// 首帧之前把主题定下来，否则亮色下会先闪一下深色底。
+Promise.allSettled([
+	router.replace(initialPath(label)),
+	api.getTheme().then(applyTheme),
+]).finally(() => {
 	app.mount("#app");
 
 	// 主窗口在 tauri.conf.json 里是 visible:false —— WebView2 的初始底色是白的，

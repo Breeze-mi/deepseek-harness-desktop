@@ -4,6 +4,7 @@
 //! Windows 的 CreateProcess 起不了 `.cmd`（得套 cmd /C），而且 shim 里写死的
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use super::mirror::NPM_REGISTRIES;
 use super::proc::{command, run_checked};
@@ -11,6 +12,57 @@ use super::{Reporter, Stage};
 use crate::error::{BootstrapError, Result};
 
 pub const PACKAGE: &str = "@deepseek-ai/dsh";
+
+/// DSH 的家目录：`$DSH_HOME`，未设置时是 `~/.dsh`。
+/// profile、settings.yaml、会话日志都在它下面。
+pub fn home() -> Option<PathBuf> {
+    match std::env::var_os("DSH_HOME") {
+        Some(v) => Some(PathBuf::from(v)),
+        None => dirs::home_dir().map(|h| h.join(".dsh")),
+    }
+}
+
+/// dsh 用原子写保护 `settings.yaml`：写前建锁、写完删锁。
+const SETTINGS_LOCK: &str = "settings.yaml.lock";
+
+/// 用于启动前的保守清理
+pub const LOCK_STALE_AFTER: Duration = Duration::from_secs(30);
+
+/// 清掉设置写锁。
+///
+/// `older_than` 是安全阀，防止误删另一个 dsh 正在用的锁：
+/// - 刚亲手杀完 dsh 传 `Duration::ZERO` —— 那一刻的锁必然是它留下的；
+/// - 启动前的例行清理传 [`LOCK_STALE_AFTER`] —— 正常写入持锁毫秒级，
+///   活着的锁绝不会那么老。
+pub fn clear_settings_lock(older_than: Duration) {
+    let Some(lock) = home().map(|h| h.join(SETTINGS_LOCK)) else {
+        return;
+    };
+    // 没有锁是常态，静默返回
+    let Ok(meta) = std::fs::metadata(&lock) else {
+        return;
+    };
+
+    let age = meta.modified().ok().and_then(|t| t.elapsed().ok());
+    // 读不出修改时间就当它过期 —— 宁可清掉，也不要让用户卡在「设置存不了」
+    let stale = age.map_or(true, |a| a > older_than);
+    if !stale {
+        dlog!("[dsh] 设置写锁还很新，可能有别的 dsh 正在写，不动它");
+        return;
+    }
+
+    // 有的实现用目录当锁，两种都收拾
+    let removed = if meta.is_dir() {
+        std::fs::remove_dir_all(&lock)
+    } else {
+        std::fs::remove_file(&lock)
+    };
+
+    match removed {
+        Ok(()) => dlog!("[dsh] 清掉了残留的设置写锁：{}", lock.display()),
+        Err(e) => dlog!("[dsh] 清理设置写锁失败（设置可能保存不了）：{e}"),
+    }
+}
 
 /// npm 自身也是 `.cmd`，只能通过 cmd /C 调用。
 /// `command()` 已带 CREATE_NO_WINDOW，不会闪黑框。

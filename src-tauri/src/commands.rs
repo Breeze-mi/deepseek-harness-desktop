@@ -29,8 +29,15 @@ pub fn resolve_close(app: AppHandle, action: String, remember: bool) {
     }
 }
 
+/// 打开设置窗口。
+///
+/// **必须是 async。** Tauri v2 的同步命令在主线程（事件循环分发现场）执行，
+/// 而本命令首次调用要 `WebviewWindowBuilder::build()` —— 在分发现场建窗口
+/// 正是 `windows::create_close_confirm` 文档里那个死锁：wry 重入事件循环，
+/// 主线程停摆，标题栏「设置」点下去整个应用假死。
+/// async 命令跑在异步运行时线程，与托盘菜单（spawn 后调用）同一条安全路径。
 #[tauri::command]
-pub fn open_settings(app: AppHandle) {
+pub async fn open_settings(app: AppHandle) {
     windows::open_settings(&app);
 }
 
@@ -40,10 +47,15 @@ pub fn get_close_action(app: AppHandle) -> Option<String> {
     settings::close_action(&app)
 }
 
-/// 设置页用：恢复成「每次询问」
+/// 设置页用：直接指定关闭行为。
+/// `"ask"` = 恢复每次询问（删掉记住的选择），其余原样存下。
 #[tauri::command]
-pub fn reset_close_action(app: AppHandle) {
-    settings::clear_close_action(&app);
+pub fn set_close_action(app: AppHandle, action: String) {
+    if action == "ask" {
+        settings::clear_close_action(&app);
+    } else {
+        settings::set_close_action(&app, &action);
+    }
 }
 
 /// 全局快捷键的目标动作：调出/收起主窗口。托盘菜单与设置页也用它。
@@ -183,4 +195,63 @@ pub fn open_log(app: AppHandle) -> Result<(), String> {
     app.opener()
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(|e| format!("打开日志失败：{e}"))
+}
+
+/// 重启 dsh 服务。顶栏按钮用，和托盘菜单走同一条路径。
+///
+/// 返回新地址；前端不必用它 —— 重启成功会广播 `bootstrap:ready`，
+/// 外壳听到就把 DSH 页面换过去。
+#[tauri::command]
+pub async fn restart_dsh(app: AppHandle) -> Result<String, String> {
+    crate::runtime::restart(app).await
+}
+
+/// 当前应跟随的界面主题（"light" | "dark"）。每个窗口挂载前读一次，
+/// 之后的变化走 `app:theme` 事件。
+#[tauri::command]
+pub fn get_theme(app: AppHandle) -> String {
+    crate::theme::current(&app)
+}
+
+/// 标题栏主题按钮的模式："follow" | "light" | "dark"
+#[tauri::command]
+pub fn get_theme_mode(app: AppHandle) -> String {
+    settings::theme_mode(&app)
+}
+
+/// - 显式亮/暗：把选择经 `settings.update` 写进 DSH —— 页面实时翻转、落盘
+///   settings.yaml，随后模式回到 "follow"，两边同源、永不分叉；
+///   写不进去（服务未起、上游协议变了）才降级成外壳独立模式。
+/// - "follow"：恢复跟随（降级态的手动出口）。
+#[tauri::command]
+pub async fn set_theme_mode(app: AppHandle, value: String) -> String {
+    use tauri::Emitter;
+
+    let emit = |theme: String| {
+        let _ = app.emit(
+            crate::theme::EVENT_THEME,
+            crate::theme::ThemePayload { theme },
+        );
+    };
+
+    match value.as_str() {
+        v @ ("light" | "dark") => {
+            // 乐观广播在前、网络在后：按钮点下去不能等 push 的往返
+            emit(v.to_string());
+            let mode = if crate::theme::push_to_dsh(&app, v).await {
+                "follow"
+            } else {
+                v
+            };
+            settings::set_theme_mode(&app, mode);
+            mode.to_string()
+        }
+        _ => {
+            // 恢复跟随没有网络环节。**必须先落模式再取值**：current() 按模式
+            // 分派，先取值会拿旧的显式模式算出错值，真值要等轮询兜回来。
+            settings::set_theme_mode(&app, "follow");
+            emit(crate::theme::current(&app));
+            "follow".to_string()
+        }
+    }
 }

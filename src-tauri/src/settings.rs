@@ -96,3 +96,25 @@ pub fn set_notify_on_done(app: &AppHandle, value: bool) {
     store.set(KEY_NOTIFY_ON_DONE, serde_json::Value::from(value));
     let _ = store.save();
 }
+
+/// 外壳主题模式："follow"（跟随 DSH，默认）| "light" | "dark"。
+///
+/// 显式模式存在的理由：跟随模式的延迟 = DSH 把偏好落盘 + 我们轮询发现，
+/// 最坏要一两秒；标题栏按钮直切时必须立即生效，等不起这一趟。
+const KEY_THEME_MODE: &str = "themeMode";
+
+pub fn theme_mode(app: &AppHandle) -> String {
+    let Ok(store) = app.store(FILE) else {
+        return "follow".into();
+    };
+    store
+        .get(KEY_THEME_MODE)
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "follow".into())
+}
+
+pub fn set_theme_mode(app: &AppHandle, value: &str) {
+    let Ok(store) = app.store(FILE) else { return };
+    store.set(KEY_THEME_MODE, serde_json::Value::from(value));
+    let _ = store.save();
+}

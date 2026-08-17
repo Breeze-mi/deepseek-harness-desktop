@@ -111,6 +111,11 @@ pub fn spawn(app: AppHandle, base_url: String, enabled: NotifyEnabled) {
         loop {
             tokio::time::sleep(POLL).await;
 
+            if app.state::<super::DshState>().url().as_deref() != Some(base_url.as_str()) {
+                dlog!("[watcher] 服务已换代，旧监视器退出（{base_url}）");
+                return;
+            }
+
             let (phase, turns) = match fetch(&client, &endpoint).await {
                 Poll::Phase { phase, turns } => {
                     failures = 0;
@@ -125,9 +130,11 @@ pub fn spawn(app: AppHandle, base_url: String, enabled: NotifyEnabled) {
                 Poll::Unreachable => {
                     failures += 1;
                     if failures >= MAX_FAILURES {
+                        // 服务换代的情况在循环顶部已经安静退出了，能走到这里
+                        // 说明地址没变却一直连不上
                         dlog!(
                             "[watcher] {endpoint} 连续 {MAX_FAILURES} 次连不上，停止监视。\
-                             正常情况：dsh 已重启（新监视器已接管）或插件未安装。"
+                             多半是宠物插件未安装，或 dsh 服务已异常。"
                         );
                         return;
                     }

@@ -37,11 +37,11 @@ pub struct DshHandle {
 }
 
 impl DshHandle {
-    /// 正常退出时关闭。Job Object 兜异常情况，这里兜正常路径 ——
-    /// 让 dsh 有机会把状态落盘，而不是被硬杀。
+    /// 停掉 dsh。
     pub fn shutdown(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        crate::bootstrap::dsh::clear_settings_lock(Duration::ZERO);
     }
 }
 
@@ -56,6 +56,9 @@ impl Drop for DshHandle {
 /// `--port 0` 是 dsh 官方支持的「让 OS 挑空闲端口」
 /// 真实端口从 dsh 的 stdout 里读回来。
 pub fn spawn(node: &NodeInfo, entry: &Path) -> Result<(DshHandle, Receiver<String>)> {
+    // 上一轮若是崩溃或被强杀（shutdown 没跑到），可能留下设置写锁。
+    crate::bootstrap::dsh::clear_settings_lock(crate::bootstrap::dsh::LOCK_STALE_AFTER);
+
     // 落一条启动痕迹。出现过「安装完成到超时失败之间 60 秒零日志」，
     dlog!("[dsh] 启动：{} {}", node.path.display(), entry.display());
 

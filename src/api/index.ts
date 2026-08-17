@@ -5,11 +5,15 @@ import {
 	EVENT_FAILED,
 	EVENT_PROGRESS,
 	EVENT_READY,
+	EVENT_THEME,
 	EVENT_WARNING,
 	type CloseAction,
+	type CloseSetting,
 	type ErrorPayload,
 	type Progress,
 	type ReadyPayload,
+	type ThemeMode,
+	type ThemePayload,
 	type UpgradeReport,
 	type WarningPayload,
 } from "@/types";
@@ -25,7 +29,9 @@ export const api = {
 
 	getCloseAction: () => invoke<string | null>("get_close_action"),
 
-	resetCloseAction: () => invoke<void>("reset_close_action"),
+	/** 设置页用：指定关闭行为。"ask" = 恢复每次询问。 */
+	setCloseAction: (action: CloseSetting) =>
+		invoke<void>("set_close_action", { action }),
 
 	/** 调出/收起主窗口，与全局快捷键同一个动作 */
 	toggleMain: () => invoke<void>("toggle_main"),
@@ -67,6 +73,24 @@ export const api = {
 
 	/** 用系统默认程序打开日志文件。 */
 	openLog: () => invoke<void>("open_log"),
+
+	/**
+	 * 重启 dsh 服务（不重启应用）。要几秒到几十秒。
+	 * 成功后 Rust 会广播 ready 事件，外壳据此换到新地址。
+	 */
+	restartDsh: () => invoke<string>("restart_dsh"),
+
+	/** 当前应跟随的主题，取自 DSH 的设置 */
+	getTheme: () => invoke<"light" | "dark">("get_theme"),
+
+	getThemeMode: () => invoke<ThemeMode>("get_theme_mode"),
+
+	/**
+	 * 改主题。亮/暗会写进 DSH 的外观设置（它是唯一真值，页面实时翻转），
+	 * 成功后模式回到 follow；写不进去才降级为外壳独立。返回最终模式。
+	 */
+	setThemeMode: (value: ThemeMode) =>
+		invoke<ThemeMode>("set_theme_mode", { value }),
 };
 
 export const events = {
@@ -81,4 +105,8 @@ export const events = {
 
 	onWarning: (cb: (p: WarningPayload) => void): Promise<UnlistenFn> =>
 		listen<WarningPayload>(EVENT_WARNING, (e) => cb(e.payload)),
+
+	/** DSH 主题变化。每个窗口都该听，配色才会一起跟着走。 */
+	onTheme: (cb: (p: ThemePayload) => void): Promise<UnlistenFn> =>
+		listen<ThemePayload>(EVENT_THEME, (e) => cb(e.payload)),
 };

@@ -8,6 +8,7 @@ mod commands;
 mod error;
 mod runtime;
 mod settings;
+mod theme;
 mod tray;
 mod windows;
 
@@ -143,6 +144,10 @@ pub fn run() {
 
                 tray::create(app.handle())?;
 
+                // 外壳的配色跟着 DSH 走。放在托盘之后、窗口创建之前都行，
+                // 它只是个后台轮询，不碰窗口。
+                theme::spawn_watcher(app.handle().clone());
+
                 // 关闭确认框预创建（隐藏）。
                 // 现场建 —— 那条路偶发死锁整个事件循环，见 create_close_confirm。
                 windows::create_close_confirm(app.handle());
@@ -212,7 +217,7 @@ pub fn run() {
             commands::resolve_close,
             commands::open_settings,
             commands::get_close_action,
-            commands::reset_close_action,
+            commands::set_close_action,
             commands::toggle_main,
             commands::get_global_shortcut,
             commands::set_global_shortcut,
@@ -224,6 +229,10 @@ pub fn run() {
             commands::upgrade_plugins,
             commands::restart_app,
             commands::open_log,
+            commands::restart_dsh,
+            commands::get_theme,
+            commands::get_theme_mode,
+            commands::set_theme_mode,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用启动失败");

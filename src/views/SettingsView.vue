@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRouter } from "vue-router";
 import { api } from "@/api";
-import type { UpgradeReport } from "@/types";
+import SelectMenu from "@/components/SelectMenu.vue";
+import TitleBar from "@/components/TitleBar.vue";
+import ToggleSwitch from "@/components/ToggleSwitch.vue";
+import type { CloseSetting, UpgradeReport } from "@/types";
 
 const router = useRouter();
-const closeAction = ref<string | null>(null);
+const closeAction = ref<CloseSetting>("ask");
 const shortcut = ref("");
 const savedShortcut = ref("");
 const ready = ref(false);
@@ -21,13 +24,15 @@ const upgraded = ref("");
 const pluginsUpgraded = ref("");
 const upgradeError = ref("");
 const confirmingPlugins = ref(false);
+const lastChecked = ref("");
 /** dsh 已被停掉、必须重启应用才能恢复 */
 const serviceStopped = ref(false);
 
-const CLOSE_LABEL: Record<string, string> = {
-  quit: "直接退出应用",
-  tray: "最小化到托盘",
-};
+const CLOSE_OPTIONS: { value: CloseSetting; label: string }[] = [
+  { value: "ask", label: "每次询问" },
+  { value: "tray", label: "最小化到托盘" },
+  { value: "quit", label: "直接退出应用" },
+];
 
 const PRESETS = ["Alt+Space", "Ctrl+Shift+Space", "Alt+D", "Ctrl+Alt+D"];
 
@@ -41,16 +46,18 @@ async function load() {
     api.serviceReady(),
     api.getNotifyOnDone(),
   ]);
-  closeAction.value = close;
+  // 未设置默认每次询问
+  closeAction.value = (close as CloseSetting | null) ?? "ask";
   savedShortcut.value = sc;
   shortcut.value = sc;
   ready.value = isReady;
   notifyOnDone.value = notify;
 }
 
-async function toggleNotify() {
-  notifyOnDone.value = !notifyOnDone.value;
-  await api.setNotifyOnDone(notifyOnDone.value);
+/** 开关即时生效 */
+async function setNotify(value: boolean) {
+  notifyOnDone.value = value;
+  await api.setNotifyOnDone(value);
 }
 
 async function saveShortcut(value?: string) {
@@ -65,9 +72,10 @@ async function saveShortcut(value?: string) {
   }
 }
 
-async function resetClose() {
-  await api.resetCloseAction();
-  closeAction.value = await api.getCloseAction();
+
+async function setClose(value: string) {
+  closeAction.value = value as CloseSetting;
+  await api.setCloseAction(closeAction.value);
 }
 
 async function checkUpgrades() {
@@ -75,6 +83,10 @@ async function checkUpgrades() {
   upgradeError.value = "";
   try {
     report.value = await api.checkUpgrades();
+    lastChecked.value = new Date().toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } catch (e) {
     upgradeError.value = String(e);
   } finally {
@@ -157,27 +169,52 @@ async function upgradePlugins() {
   }
 }
 
+/** 服务状态轮询句柄。 */
+let readyTicker: number | undefined;
+
 onMounted(async () => {
   await load();
   // 托盘的「检查更新」就是直接打开本页，所以挂载时自动查一次，
   // 否则那个菜单项等于只是「打开设置」，名不副实。
   // 不 await：让页面先渲染出来，网络查询在后台跑。
   checkUpgrades();
+
+  readyTicker = window.setInterval(() => {
+    // 失败按「未就绪」处理并吞掉：这是每 3 秒一次的后台探测，
+    // 抛出去只会变成 unhandledrejection 
+    api
+      .serviceReady()
+      .then((v) => (ready.value = v))
+      .catch(() => (ready.value = false));
+  }, 3000);
+});
+
+onUnmounted(() => {
+  window.clearInterval(readyTicker);
 });
 </script>
 
 <template>
   <div class="page">
-    <header class="head">
-      <h1>设置</h1>
-      <div class="head-actions">
+    <!-- 无边框窗口：头部就是标题栏。drag-region 只对元素本身生效，
+         标题和状态要各自标注，按钮保持可点 -->
+    <TitleBar controls="close" :close-action="back">
+      <template #left>
+        <h1 data-tauri-drag-region>设置</h1>
         <!-- 日志入口放在最显眼处：装机环境（执行策略、nvm4w、代理、镜像）
              千差万别，出问题时这个文件是唯一靠得住的线索 -->
-        <button @click="api.openLog()">打开日志</button>
-        <button @click="back">关闭</button>
-      </div>
-    </header>
+        <button class="tb" @click="api.openLog()">查看日志</button>
+      </template>
 
+      <template #right>
+        <span class="svc" data-tauri-drag-region>
+          <span class="dot" :class="{ off: !ready }" />
+          {{ ready ? "dsh 运行中" : "dsh 未就绪" }}
+        </span>
+      </template>
+    </TitleBar>
+
+    <div class="body">
     <section class="card">
       <div class="card-title">全局快捷键</div>
       <p class="dim">
@@ -221,95 +258,119 @@ onMounted(async () => {
         <span class="value">
           {{ disabled ? "已关闭" : `当前：${savedShortcut}` }}
         </span>
-        <span class="value">
-          dsh 服务{{ ready ? "运行中" : "未就绪" }}
-        </span>
       </div>
     </section>
 
     <section class="card">
-      <div class="card-title">任务完成通知</div>
+      <div class="card-head">
+        <div class="card-title">任务完成通知</div>
+        <ToggleSwitch
+          :model-value="notifyOnDone"
+          label="任务完成通知"
+          @update:model-value="setNotify"
+        />
+      </div>
       <p class="dim">
         智能体跑完一轮任务时发一条系统通知，并让任务栏图标闪烁提醒。
         只在主窗口不在前台时提醒。
       </p>
-      <div class="row">
-        <span class="value">{{ notifyOnDone ? "已开启" : "已关闭" }}</span>
-        <button @click="toggleNotify">{{ notifyOnDone ? "关闭" : "开启" }}</button>
-      </div>
     </section>
 
     <section class="card">
-      <div class="card-title">关闭主窗口时</div>
-      <div class="row">
-        <span class="value">
-          {{ closeAction ? (CLOSE_LABEL[closeAction] ?? closeAction) : "每次询问" }}
-        </span>
-        <button v-if="closeAction" @click="resetClose">改回每次询问</button>
+      <div class="card-head">
+        <div class="card-title">关闭主窗口时</div>
+        <SelectMenu
+          :model-value="closeAction"
+          :options="CLOSE_OPTIONS"
+          label="关闭主窗口时的行为"
+          @update:model-value="setClose"
+        />
       </div>
+      <p class="dim">
+        最小化到托盘后 dsh 服务继续在后台运行，正在跑的任务不会中断。
+      </p>
     </section>
 
     <section class="card">
-      <div class="card-title">版本与更新</div>
+      <div class="card-head">
+        <div class="card-title">版本与更新</div>
+        <button class="chip" :disabled="checking || upgrading" @click="checkUpgrades">
+          {{ checking ? "检查中…" : "检查更新" }}
+        </button>
+      </div>
 
       <template v-if="report">
         <div class="pkg">
           <div class="pkg-head">
-            <span>DeepSeek Harness（dsh）</span>
-            <span class="value">{{ report.dsh.installed ?? "未安装" }}</span>
+            <span>{{ report.app.name }}</span>
+            <span class="value">{{ report.app.installed ?? "未知" }}</span>
           </div>
-          <p v-if="report.dsh.upgradable" class="dim small">
-            可升级到 {{ report.dsh.target }}
-          </p>
-          <p v-else-if="report.dsh.note" class="dim small">
-            {{ report.dsh.note }}
-          </p>
+          <p v-if="report.app.note" class="dim small">{{ report.app.note }}</p>
         </div>
 
         <div class="pkg">
           <div class="pkg-head">
-            <span>界面插件（含鲸鱼娘）</span>
+            <span>DeepSeek Harness</span>
+            <span class="value">{{ report.dsh.installed ?? "未安装" }}</span>
+          </div>
+          <div class="pkg-body">
+            <p v-if="report.dsh.note" class="dim small">{{ report.dsh.note }}</p>
+            <button
+              v-if="report.dsh.upgradable && !serviceStopped"
+              class="chip"
+              :disabled="upgrading"
+              @click="upgradeDsh"
+            >
+              <template v-if="confirming">确认？会断开当前会话</template>
+              <template v-else>升级到 {{ report.dsh.target }}</template>
+            </button>
+          </div>
+        </div>
+
+        <div class="pkg">
+          <div class="pkg-head">
+            <span>界面插件 </span>
             <span class="value">{{ report.bundle.installed ?? "未安装" }}</span>
           </div>
-          <p v-if="report.bundle.upgradable" class="dim small">
-            重启应用后会自动装到 {{ report.bundle.target }}
-          </p>
-          <p v-else-if="report.bundle.note" class="dim small">
-            {{ report.bundle.note }}
-          </p>
-          <button
-            v-if="report.bundle.latestIsNewer && !serviceStopped"
-            class="chip"
-            :disabled="upgrading"
-            @click="upgradePlugins"
-          >
-            <template v-if="confirmingPlugins">
-              确认升到 {{ report.bundle.latest }}？会断开当前会话
-            </template>
-            <template v-else>升级到 {{ report.bundle.latest }}</template>
-          </button>
+          <div class="pkg-body">
+            <p v-if="report.bundle.upgradable" class="dim small">
+              重启应用后会自动装到 {{ report.bundle.target }}
+            </p>
+            <p v-else-if="report.bundle.note" class="dim small">
+              {{ report.bundle.note }}
+            </p>
+            <button
+              v-if="report.bundle.latestIsNewer && !serviceStopped"
+              class="chip"
+              :disabled="upgrading"
+              @click="upgradePlugins"
+            >
+              <template v-if="confirmingPlugins">
+                确认升到 {{ report.bundle.latest }}？会断开当前会话
+              </template>
+              <template v-else>升级到 {{ report.bundle.latest }}</template>
+            </button>
+          </div>
         </div>
       </template>
-      <p v-else class="dim">尚未检查。dsh 与命令行共用同一份安装。</p>
+      <p v-else class="dim">{{ checking ? "正在检查…" : "尚未检查" }}</p>
 
-      <p v-if="upgradeError" class="warn">
+      <p v-if="upgradeError" class="warn err">
         {{ upgradeError }}
         <template v-if="serviceStopped">
           <br />dsh 服务已停止，请重启应用恢复。
         </template>
       </p>
-      <p v-else-if="upgraded" class="warn">
+      <p v-else-if="upgraded" class="warn ok">
         dsh 已升级到 {{ upgraded }}，服务已重启。
       </p>
-      <p v-else-if="pluginsUpgraded" class="warn">
+      <p v-else-if="pluginsUpgraded" class="warn ok">
         界面插件已升级到 {{ pluginsUpgraded }}，服务已重启。
       </p>
 
       <div class="row">
-        <button :disabled="checking || upgrading" @click="checkUpgrades">
-          {{ checking ? "检查中…" : "检查更新" }}
-        </button>
-
+        <!-- 时间戳 -->
+        <span class="value">{{ lastChecked ? `上次检查 ${lastChecked}` : "" }}</span>
         <button
           v-if="serviceStopped"
           class="primary"
@@ -318,41 +379,58 @@ onMounted(async () => {
         >
           {{ upgrading ? "升级中…" : "立即重启" }}
         </button>
-        <button
-          v-else-if="report?.dsh.upgradable"
-          class="primary"
-          @click="upgradeDsh"
-        >
-          <template v-if="confirming">确认？会断开当前会话</template>
-          <template v-else>升级 dsh</template>
-        </button>
       </div>
     </section>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .page {
-  padding: 24px 28px;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  padding: 20px 24px;
+  scrollbar-width: none;
 }
 
-.head {
-  display: flex;
+.body::-webkit-scrollbar {
+  display: none;
+}
+
+
+
+/* 服务状态：与主窗口标题栏同一套状态灯语言 */
+.svc {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 18px;
+  gap: 6px;
+  margin-right: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
-.head-actions {
-  display: flex;
-  gap: 8px;
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.dot.off {
+  background: var(--danger);
 }
 
 h1 {
-  font-size: 18px;
-  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 8px 0 0;
 }
 
 .card {
@@ -366,6 +444,31 @@ h1 {
 .card-title {
   font-weight: 600;
   margin-bottom: 10px;
+}
+
+/* 标题与卡片级动作同一行 */
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.card-head .card-title {
+  margin-bottom: 0;
+}
+
+/* 说明文字在左、动作按钮在右，一条一个动作 */
+.pkg-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pkg-body .chip {
+  flex: 0 0 auto;
 }
 
 .field {
@@ -454,10 +557,20 @@ h1 {
   padding: 9px 11px;
   background: var(--bg);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
   border-radius: 6px;
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.7;
+}
+
+/* 结果消息分级：成功绿、失败红 */
+.warn.ok {
+  border-left-color: var(--ok);
+}
+
+.warn.err {
+  border-left-color: var(--danger);
 }
 
 button:disabled {
